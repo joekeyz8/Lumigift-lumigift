@@ -1,0 +1,141 @@
+/* ─── Lumigift Design System ────────────────────────────────────────────────────
+   Vanilla CSS custom properties — single source of truth for all tokens.
+   Dark theme is the default; light theme overrides via [data-theme="light"].
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* ── Dark theme (default) ─────────────────────────────────────────────────── */
+:root {
+  --color-scheme: dark;
+
+  /* Brand */
+  --color-brand-primary: #6c3bff;
+  --color-brand-primary-hover: #5a2ee0;
+  --color-brand-secondary: #ff6b6b;
+  --color-brand-accent: #ffd166;
+
+  /* Neutrals */
+  --color-bg: #0d0d14;
+  --color-bg-surface: #16161f;
+  --color-bg-elevated: #1e1e2a;
+  --color-border: #2a2a3a;
+  --color-border-subtle: #1e1e2a;
+
+  /* Text */
+  --color-text-primary: #f0f0f5;
+  --color-text-secondary: #9898b0;
+  --color-text-muted: #5a5a72;
+  --color-text-inverse: #0d0d14;
+
+  /* Semantic */
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #3b82f6;
+
+  /* Typography */
+  --font-sans: var(--font-inter, "Inter"), system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+  --text-4xl: 2.25rem;
+  --text-5xl: 3rem;
+
+  --font-normal: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.75;
+
+  /* Spacing */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-20: 5rem;
+  --space-24: 6rem;
+
+  /* Radii */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+  --radius-full: 9999px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
+  --shadow-glow: 0 0 24px rgba(108, 59, 255, 0.35);
+
+  /* Transitions */
+  --transition-fast: 120ms ease;
+  --transition-base: 200ms ease;
+  --transition-slow: 350ms ease;
+
+  /* Layout */
+  --max-width-sm: 640px;
+  --max-width-md: 768px;
+  --max-width-lg: 1024px;
+  --max-width-xl: 1280px;
+  --max-width-content: 720px;
+}
+
+/* ── Light theme ──────────────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --color-scheme: light;
+
+  --color-bg: #f5f5fa;
+  --color-bg-surface: #ffffff;
+  --color-bg-elevated: #eeeef5;
+  --color-border: #d0d0e0;
+  --color-border-subtle: #e4e4f0;
+
+  --color-text-primary: #0d0d14;
+  --color-text-secondary: #4a4a62;
+  --color-text-muted: #8888a0;
+  --color-text-inverse: #f0f0f5;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.12);
+  --shadow-glow: 0 0 24px rgba(108, 59, 255, 0.2);
+}
+
+/* ── System preference: light ─────────────────────────────────────────────── */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --color-scheme: light;
+
+    --color-bg: #f5f5fa;
+    --color-bg-surface: #ffffff;
+    --color-bg-elevated: #eeeef5;
+    --color-border: #d0d0e0;
+    --color-border-subtle: #e4e4f0;
+
+    --color-text-primary: #0d0d14;
+    --color-text-secondary: #4a4a62;
+    --color-text-muted: #8888a0;
+    --color-text-inverse: #f0f0f5;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.12);
+    --shadow-glow: 0 0 24px rgba(108, 59, 255, 0.2);
+  }
+}

@@ -1,0 +1,13 @@
+#!/usr/bin/env sh
+
+# Run lint-staged (Prettier)
+npx lint-staged
+
+# Secret scan — requires gitleaks to be installed locally.
+# CI always runs the full gitleaks scan via GitHub Actions (ci.yml secret-scan job).
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --config=.gitleaks.toml --redact
+else
+  echo "ℹ️  gitleaks not installed locally — skipping pre-commit secret scan."
+  echo "   Secrets are scanned in CI via GitHub Actions (ci.yml: secret-scan job)."
+fi

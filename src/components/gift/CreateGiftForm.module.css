@@ -1,0 +1,45 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  width: 100%;
+  max-width: 480px;
+}
+
+.title {
+  font-size: var(--text-2xl);
+  font-weight: var(--font-bold);
+  color: var(--color-text-primary);
+}
+
+.error {
+  font-size: var(--text-sm);
+  color: var(--color-error);
+  background-color: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+}
+
+/* ─── Mobile (≤ 375px) ────────────────────────────────────────────────────── */
+@media (max-width: 375px) {
+  .form {
+    max-width: 100%;
+    gap: var(--space-4);
+  }
+
+  .title {
+    font-size: var(--text-xl);
+  }
+}
+
+/* ─── Small mobile (≤ 320px) ─────────────────────────────────────────────── */
+@media (max-width: 320px) {
+  .form {
+    gap: var(--space-3);
+  }
+
+  .title {
+    font-size: var(--text-lg);
+  }
+}
