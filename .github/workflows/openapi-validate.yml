@@ -16,7 +16,7 @@ jobs:
     name: Validate OpenAPI Spec
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.1
 
       - name: Validate openapi.yaml
         uses: actions/setup-node@v6
