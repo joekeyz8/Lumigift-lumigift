@@ -3,19 +3,31 @@ import Stripe from "stripe";
 import { updateGiftStatus } from "@/server/services/gift.service";
 import type { ApiResponse } from "@/types";
 
-const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-if (!webhookSecret) {
-  throw new Error("Missing required environment variable: STRIPE_WEBHOOK_SECRET");
+// Lazily initialised so module evaluation at build time never throws.
+let _stripe: Stripe | null = null;
+function getStripe(): Stripe {
+  if (!_stripe) {
+    _stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? "", {
+      apiVersion: "2026-04-22.dahlia",
+    });
+  }
+  return _stripe;
 }
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? "", {
-  apiVersion: "2026-04-22.dahlia",
-});
 
 // Next.js must not parse the body — Stripe needs the raw bytes for signature verification.
 // In App Router, request body is not pre-parsed, so no config needed.
 
 export async function POST(req: NextRequest) {
+  // Guard moved inside handler so missing env var is a 500 at request time,
+  // not a module-level crash that breaks the build.
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!webhookSecret) {
+    return NextResponse.json<ApiResponse<never>>(
+      { success: false, error: "Stripe webhook secret not configured" },
+      { status: 500 }
+    );
+  }
+
   const sig = req.headers.get("stripe-signature");
   if (!sig) {
     return NextResponse.json<ApiResponse<never>>(
@@ -27,7 +39,7 @@ export async function POST(req: NextRequest) {
   let event: Stripe.Event;
   try {
     const rawBody = await req.text();
-    event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret!);
+    event = getStripe().webhooks.constructEvent(rawBody, sig, webhookSecret);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Invalid signature";
     return NextResponse.json<ApiResponse<never>>(

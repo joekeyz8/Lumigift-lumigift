@@ -11,12 +11,33 @@ import { serverConfig } from "@/server/config";
 import { logger } from "@/lib/logger";
 import type { StellarAccount, StellarBalance } from "@/types";
 
-const server = new Horizon.Server(serverConfig.stellar.horizonUrl);
+// Lazily initialised — avoids module-level crash during `next build` when env
+// vars are stubs.  All usages go through the accessor functions below.
+let _server: Horizon.Server | null = null;
+let _USDC: Asset | null = null;
+let _networkPassphrase: string | null = null;
 
-const USDC = new Asset(serverConfig.usdc.assetCode, serverConfig.usdc.issuer);
+function getServer(): Horizon.Server {
+  if (!_server) {
+    _server = new Horizon.Server(serverConfig.stellar.horizonUrl);
+  }
+  return _server;
+}
 
-const networkPassphrase =
-  serverConfig.stellar.network === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
+function getUSDC(): Asset {
+  if (!_USDC) {
+    _USDC = new Asset(serverConfig.usdc.assetCode, serverConfig.usdc.issuer);
+  }
+  return _USDC;
+}
+
+function getNetworkPassphrase(): string {
+  if (!_networkPassphrase) {
+    _networkPassphrase =
+      serverConfig.stellar.network === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
+  }
+  return _networkPassphrase;
+}
 
 /**
  * Derives and returns the server's Stellar public key from the configured secret.
@@ -63,7 +84,7 @@ export function auditLogKeyRotation(
  *   if the account does not exist on the network.
  */
 export async function loadAccount(publicKey: string): Promise<StellarAccount> {
-  const account = await server.loadAccount(publicKey);
+  const account = await getServer().loadAccount(publicKey);
   const balances: StellarBalance[] = account.balances.map((b) => ({
     assetCode: b.asset_type === "native" ? "XLM" : (b as { asset_code: string }).asset_code,
     assetIssuer:
@@ -103,16 +124,16 @@ export async function sendUsdcPayment(
   amount: string
 ): Promise<string> {
   const serverKeypair = Keypair.fromSecret(serverConfig.stellar.serverSecretKey);
-  const sourceAccount = await server.loadAccount(serverKeypair.publicKey());
+  const sourceAccount = await getServer().loadAccount(serverKeypair.publicKey());
 
   const tx = new TransactionBuilder(sourceAccount, {
     fee: BASE_FEE,
-    networkPassphrase,
+    networkPassphrase: getNetworkPassphrase(),
   })
     .addOperation(
       Operation.payment({
         destination: destinationPublicKey,
-        asset: USDC,
+        asset: getUSDC(),
         amount,
       })
     )
@@ -120,7 +141,7 @@ export async function sendUsdcPayment(
     .build();
 
   tx.sign(serverKeypair);
-  const result = await server.submitTransaction(tx);
+  const result = await getServer().submitTransaction(tx);
   return result.hash;
 }
 
@@ -135,19 +156,19 @@ export async function sendUsdcPayment(
  */
 export async function establishUsdcTrustline(secretKey: string): Promise<string> {
   const keypair = Keypair.fromSecret(secretKey);
-  const account = await server.loadAccount(keypair.publicKey());
+  const account = await getServer().loadAccount(keypair.publicKey());
 
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
-    networkPassphrase,
+    networkPassphrase: getNetworkPassphrase(),
   })
-    .addOperation(Operation.changeTrust({ asset: USDC }))
+    .addOperation(Operation.changeTrust({ asset: getUSDC() }))
     .setTimeout(30)
     .build();
 
   tx.sign(keypair);
-  const result = await server.submitTransaction(tx);
+  const result = await getServer().submitTransaction(tx);
   return result.hash;
 }
 
-export { server as horizonServer, USDC, networkPassphrase };
+export { getServer as horizonServer, getUSDC as USDC, getNetworkPassphrase as networkPassphrase };

@@ -98,13 +98,24 @@ export function validateEnv(): Env {
       "\n\nPlease check your .env file and ensure all required variables are set correctly.";
 
     console.error(errorMessage);
-    // During build (NEXT_PHASE=phase-production-build) or non-production,
-    // return a stub so module-level imports don't crash.
-    // At runtime with missing vars the app will fail fast on first request.
-    if (
+
+    // Never hard-crash during:
+    //   1. next build  — NEXT_PHASE is set to "phase-production-build" in the
+    //      main process; workers inherit it.
+    //   2. Tests        — NODE_ENV === "test"
+    //   3. Development  — NODE_ENV === "development"
+    //
+    // In all those cases return a Proxy stub so modules can be imported without
+    // throwing.  At *runtime* (NODE_ENV === "production", outside of build) we
+    // exit immediately to prevent the app from starting with missing secrets.
+    const isBuild =
       process.env.NEXT_PHASE === "phase-production-build" ||
-      process.env.NODE_ENV !== "production"
-    ) {
+      // Turbopack workers may not have NEXT_PHASE; fall back to the
+      // NEXT_PHASE_BUILD_ID that Next.js also sets during static generation.
+      process.env.NEXT_BUILD_ID !== undefined;
+    const isNonProduction = process.env.NODE_ENV !== "production";
+
+    if (isBuild || isNonProduction) {
       // Return a stub with empty strings so destructuring doesn't throw
       return new Proxy({} as Env, { get: () => "" });
     }
