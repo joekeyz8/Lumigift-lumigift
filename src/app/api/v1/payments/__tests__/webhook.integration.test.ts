@@ -75,13 +75,13 @@ async function handleWebhook(
   signature: string
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   // 1. Verify signature
-  const expected = crypto
-    .createHmac("sha512", WEBHOOK_SECRET)
-    .update(rawBody)
-    .digest("hex");
+  const expected = crypto.createHmac("sha512", WEBHOOK_SECRET).update(rawBody).digest("hex");
   if (
     Buffer.from(expected).length !== Buffer.from(signature).length ||
-    !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature.padEnd(expected.length, "\0").slice(0, expected.length)))
+    !crypto.timingSafeEqual(
+      Buffer.from(expected),
+      Buffer.from(signature.padEnd(expected.length, "\0").slice(0, expected.length))
+    )
   ) {
     return { status: 400, body: { error: "Invalid signature" } };
   }
@@ -96,10 +96,9 @@ async function handleWebhook(
   const { reference } = event.data;
 
   // 2. Idempotency check
-  const dup = await pool.query(
-    "SELECT 1 FROM paystack_processed_refs WHERE reference = $1",
-    [reference]
-  );
+  const dup = await pool.query("SELECT 1 FROM paystack_processed_refs WHERE reference = $1", [
+    reference,
+  ]);
   if (dup.rowCount && dup.rowCount > 0) {
     return { status: 200, body: { received: true } };
   }
@@ -108,10 +107,9 @@ async function handleWebhook(
   if (event.event === "charge.success") {
     const giftId = event.data.metadata?.giftId;
     if (giftId) {
-      await pool.query(
-        "UPDATE gifts SET status = 'locked', updated_at = NOW() WHERE id = $1",
-        [giftId]
-      );
+      await pool.query("UPDATE gifts SET status = 'locked', updated_at = NOW() WHERE id = $1", [
+        giftId,
+      ]);
     }
   }
   // Unknown event types are safely ignored (no else branch needed)

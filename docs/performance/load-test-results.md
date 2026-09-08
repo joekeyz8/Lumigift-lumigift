@@ -9,13 +9,13 @@
 
 These thresholds are enforced by k6 and will cause a non-zero exit code (CI failure) if breached.
 
-| Metric | Threshold | Rationale |
-|--------|-----------|-----------|
+| Metric                       | Threshold  | Rationale                                           |
+| ---------------------------- | ---------- | --------------------------------------------------- |
 | `gift_creation_duration` p95 | < 2 000 ms | Gift creation involves DB write + Paystack API call |
-| `gift_claim_duration` p95 | < 3 000 ms | Claim involves Stellar transaction submission |
-| `gift_creation_errors` | < 1% | Error rate budget |
-| `gift_claim_errors` | < 1% | Error rate budget |
-| `http_req_failed` | < 1% | Overall HTTP failure rate |
+| `gift_claim_duration` p95    | < 3 000 ms | Claim involves Stellar transaction submission       |
+| `gift_creation_errors`       | < 1%       | Error rate budget                                   |
+| `gift_claim_errors`          | < 1%       | Error rate budget                                   |
+| `http_req_failed`            | < 1%       | Overall HTTP failure rate                           |
 
 ---
 
@@ -53,29 +53,29 @@ Fill in after the first run against staging.
 
 ### Gift Creation (100 VUs, 30 s)
 
-| Metric | Value |
-|--------|-------|
-| Total requests | — |
-| Throughput (req/s) | — |
-| p50 latency | — ms |
-| p95 latency | — ms |
-| p99 latency | — ms |
-| Error rate | — % |
-| Date | — |
-| Environment | — |
+| Metric             | Value |
+| ------------------ | ----- |
+| Total requests     | —     |
+| Throughput (req/s) | —     |
+| p50 latency        | — ms  |
+| p95 latency        | — ms  |
+| p99 latency        | — ms  |
+| Error rate         | — %   |
+| Date               | —     |
+| Environment        | —     |
 
 ### Gift Claim (50 VUs, 30 s)
 
-| Metric | Value |
-|--------|-------|
-| Total requests | — |
-| Throughput (req/s) | — |
-| p50 latency | — ms |
-| p95 latency | — ms |
-| p99 latency | — ms |
-| Error rate | — % |
-| Date | — |
-| Environment | — |
+| Metric             | Value |
+| ------------------ | ----- |
+| Total requests     | —     |
+| Throughput (req/s) | —     |
+| p50 latency        | — ms  |
+| p95 latency        | — ms  |
+| p99 latency        | — ms  |
+| Error rate         | — %   |
+| Date               | —     |
+| Environment        | —     |
 
 ---
 

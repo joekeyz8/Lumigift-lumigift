@@ -7,11 +7,7 @@ interface GiftCardSkeletonProps {
 
 function SingleSkeleton() {
   return (
-    <div
-      className={styles.card}
-      aria-hidden="true"
-      data-testid="gift-card-skeleton"
-    >
+    <div className={styles.card} aria-hidden="true" data-testid="gift-card-skeleton">
       <div className={styles.header}>
         <div className={clsx(styles.bone, styles.headerName)} />
         <div className={clsx(styles.bone, styles.headerBadge)} />

@@ -27,12 +27,10 @@ import { getRedisClient } from "@/lib/redis";
 beforeAll(() => {
   (getRedisClient as jest.Mock).mockResolvedValue(redisMock);
 
-  redisMock.set.mockImplementation(
-    async (key: string, value: string, opts?: { EX?: number }) => {
-      const expiresAt = opts?.EX ? Date.now() + opts.EX * 1000 : Infinity;
-      store.set(key, { value, expiresAt });
-    }
-  );
+  redisMock.set.mockImplementation(async (key: string, value: string, opts?: { EX?: number }) => {
+    const expiresAt = opts?.EX ? Date.now() + opts.EX * 1000 : Infinity;
+    store.set(key, { value, expiresAt });
+  });
 
   redisMock.get.mockImplementation(async (key: string) => {
     const entry = store.get(key);
@@ -90,11 +88,7 @@ describe("storeOtp", () => {
   it("stores the OTP in Redis with a 600-second TTL", async () => {
     await storeOtp(PHONE, VALID_OTP);
 
-    expect(redisMock.set).toHaveBeenCalledWith(
-      `otp:${PHONE}`,
-      VALID_OTP,
-      { EX: 600 }
-    );
+    expect(redisMock.set).toHaveBeenCalledWith(`otp:${PHONE}`, VALID_OTP, { EX: 600 });
   });
 
   it("resets the attempts counter when a new OTP is stored", async () => {

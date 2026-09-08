@@ -14,17 +14,20 @@ What was decided? State the decision clearly and concisely.
 ## Consequences
 
 ### Positive
+
 - List the benefits of this decision.
 
 ### Negative
+
 - List the drawbacks or trade-offs.
 
 ### Neutral
+
 - List any neutral outcomes or things to watch.
 
 ## Alternatives Considered
 
-| Option | Reason Rejected |
-|--------|----------------|
+| Option        | Reason Rejected       |
+| ------------- | --------------------- |
 | Alternative A | Why it was not chosen |
 | Alternative B | Why it was not chosen |

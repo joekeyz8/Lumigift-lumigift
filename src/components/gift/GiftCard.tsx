@@ -27,8 +27,7 @@ export function GiftCard({ gift, perspective, recipientStellarKey }: GiftCardPro
   const router = useRouter();
   const [status, setStatus] = useState<GiftStatus>(gift.status);
   const isLocked = status === "locked";
-  const name =
-    perspective === "sender" ? `To: ${gift.recipientName}` : "A gift for you";
+  const name = perspective === "sender" ? `To: ${gift.recipientName}` : "A gift for you";
 
   const amountLabel =
     isLocked && perspective === "recipient" ? "amount hidden" : formatNGN(gift.amountNgn);
@@ -38,12 +37,7 @@ export function GiftCard({ gift, perspective, recipientStellarKey }: GiftCardPro
     "MMM d, yyyy 'at' h:mm a"
   )}`;
 
-  const cardLabel = [
-    name,
-    amountLabel,
-    unlockLabel,
-    status,
-  ].join(", ");
+  const cardLabel = [name, amountLabel, unlockLabel, status].join(", ");
 
   const handleActivate = () => {
     router.push(`/gifts/${gift.id}`);
@@ -82,18 +76,12 @@ export function GiftCard({ gift, perspective, recipientStellarKey }: GiftCardPro
         <span>{unlockLabel}</span>
       </div>
 
-      {gift.message && !isLocked && (
-        <p className={styles.message}>{gift.message}</p>
-      )}
+      {gift.message && !isLocked && <p className={styles.message}>{gift.message}</p>}
 
       {gift.stellarTxHash && (
         <div className={styles.meta}>
           <span>Funding tx: </span>
-          <a
-            href={explorerUrl(gift.stellarTxHash)}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
+          <a href={explorerUrl(gift.stellarTxHash)} target="_blank" rel="noopener noreferrer">
             {gift.stellarTxHash.slice(0, 8)}…
           </a>
         </div>
@@ -102,11 +90,7 @@ export function GiftCard({ gift, perspective, recipientStellarKey }: GiftCardPro
       {gift.claimTxHash && (
         <div className={styles.meta}>
           <span>Claim tx: </span>
-          <a
-            href={explorerUrl(gift.claimTxHash)}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
+          <a href={explorerUrl(gift.claimTxHash)} target="_blank" rel="noopener noreferrer">
             {gift.claimTxHash.slice(0, 8)}…
           </a>
         </div>

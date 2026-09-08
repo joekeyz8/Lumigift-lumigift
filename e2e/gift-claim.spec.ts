@@ -128,14 +128,10 @@ test("USDC balance increases after successful claim", async ({ page }) => {
   await page.getByRole("button", { name: /claim gift/i }).click();
 
   // Verify the claim API was hit (balance change is implicit from the mock)
-  await expect
-    .poll(() => claimed, { timeout: 10_000 })
-    .toBe(true);
+  await expect.poll(() => claimed, { timeout: 10_000 }).toBe(true);
 
   // Fetch balance directly to assert the post-claim value
-  const balanceRes = await page.request.get(
-    `${page.url().split("/gifts")[0]}${BALANCE_API}`
-  );
+  const balanceRes = await page.request.get(`${page.url().split("/gifts")[0]}${BALANCE_API}`);
   const balanceJson = await balanceRes.json();
   expect(parseFloat(balanceJson.data.balance)).toBeGreaterThan(10);
 });

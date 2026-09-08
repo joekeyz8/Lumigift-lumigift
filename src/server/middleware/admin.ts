@@ -4,9 +4,7 @@ import { NextResponse } from "next/server";
 import type { ApiError } from "@/types";
 
 /** Returns the session user ID if the caller is an admin, or a 403 response. */
-export async function requireAdmin(): Promise<
-  { userId: string } | NextResponse<ApiError>
-> {
+export async function requireAdmin(): Promise<{ userId: string } | NextResponse<ApiError>> {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     return NextResponse.json<ApiError>(

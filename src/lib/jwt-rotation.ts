@@ -11,10 +11,7 @@
 import { encode, decode } from "next-auth/jwt";
 
 /** Grace period in hours during which old tokens remain valid. */
-const ROTATION_GRACE_HOURS = parseInt(
-  process.env.NEXTAUTH_ROTATION_GRACE_HOURS ?? "24",
-  10
-);
+const ROTATION_GRACE_HOURS = parseInt(process.env.NEXTAUTH_ROTATION_GRACE_HOURS ?? "24", 10);
 
 const GRACE_MS = ROTATION_GRACE_HOURS * 60 * 60 * 1000;
 

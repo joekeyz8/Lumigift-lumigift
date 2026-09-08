@@ -17,9 +17,7 @@ export async function storeOtp(phone: string, otp: string): Promise<void> {
   await redis.del(`otp:attempts:${phone}`);
 }
 
-export type VerifyResult =
-  | { success: true }
-  | { success: false; locked: boolean; message: string };
+export type VerifyResult = { success: true } | { success: false; locked: boolean; message: string };
 
 /**
  * Verifies a one-time password submitted by the user.
@@ -37,15 +35,16 @@ export type VerifyResult =
  * @param otp - The OTP string submitted by the user.
  * @returns A {@link VerifyResult} describing the outcome.
  */
-export async function verifyOtp(
-  phone: string,
-  otp: string
-): Promise<VerifyResult> {
+export async function verifyOtp(phone: string, otp: string): Promise<VerifyResult> {
   const redis = await getRedisClient();
   const stored = await redis.get(`otp:${phone}`);
 
   if (!stored) {
-    return { success: false, locked: false, message: "OTP expired or not found. Please request a new one." };
+    return {
+      success: false,
+      locked: false,
+      message: "OTP expired or not found. Please request a new one.",
+    };
   }
 
   const attempts = await redis.incr(`otp:attempts:${phone}`);
@@ -57,13 +56,21 @@ export async function verifyOtp(
 
   if (attempts > MAX_ATTEMPTS) {
     await redis.del(`otp:${phone}`);
-    return { success: false, locked: true, message: "Too many failed attempts. Please request a new OTP." };
+    return {
+      success: false,
+      locked: true,
+      message: "Too many failed attempts. Please request a new OTP.",
+    };
   }
 
   if (otp !== stored) {
     if (attempts === MAX_ATTEMPTS) {
       await redis.del(`otp:${phone}`);
-      return { success: false, locked: true, message: "Too many failed attempts. Please request a new OTP." };
+      return {
+        success: false,
+        locked: true,
+        message: "Too many failed attempts. Please request a new OTP.",
+      };
     }
     return { success: false, locked: false, message: "Invalid OTP." };
   }

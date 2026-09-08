@@ -3,7 +3,7 @@
 ## Supported Versions
 
 | Version | Supported |
-|---------|-----------|
+| ------- | --------- |
 | 0.x     | ✅ Yes    |
 
 ## Reporting a Vulnerability
@@ -22,12 +22,14 @@ We will acknowledge your report within 48 hours and aim to release a fix within 
 ## Scope
 
 In scope:
+
 - Smart contract vulnerabilities (fund loss, unauthorized claims)
 - Authentication bypass
 - API injection or data exposure
 - Dependency vulnerabilities with known exploits
 
 Out of scope:
+
 - Social engineering
 - Denial of service via resource exhaustion
 - Issues requiring physical access to a device

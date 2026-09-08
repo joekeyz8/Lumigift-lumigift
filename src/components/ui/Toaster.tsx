@@ -16,11 +16,7 @@ export function Toaster() {
   return (
     <div className={styles.container} aria-live="polite" aria-label="Notifications">
       {toasts.map((toast) => (
-        <div
-          key={toast.id}
-          role="alert"
-          className={`${styles.toast} ${styles[toast.variant]}`}
-        >
+        <div key={toast.id} role="alert" className={`${styles.toast} ${styles[toast.variant]}`}>
           <span className={styles.icon} aria-hidden="true">
             {ICONS[toast.variant]}
           </span>

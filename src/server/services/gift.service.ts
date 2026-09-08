@@ -10,6 +10,7 @@ import { createGiftInvitation } from "./invitation.service";
 import { sendGiftInvitation } from "@/lib/sms";
 import { stripHtmlTags } from "@/lib/sanitize";
 import { createAuditLog } from "./audit.service";
+import { sendGiftReceivedEmail } from "@/lib/email";
 
 // ─── Exchange rate helper ─────────────────────────────────────────────────────
 import { getExchangeRate, lockExchangeRate } from "@/server/services/exchange-rate.service";
@@ -124,10 +125,10 @@ export async function createGift(
       const senderName = rows[0]?.display_name || "Someone";
 
       // Send invitation SMS (fire-and-forget to not block payment flow)
-      sendGiftInvitation(input.recipientPhone, invitationToken, senderName).catch((err) =>
+      sendGiftInvitation(input.recipientPhone, invitationToken, senderName).catch((err: unknown) =>
         console.error("[gift] sendGiftInvitation failed:", err)
       );
-    } catch (err) {
+    } catch (err: unknown) {
       console.error("[gift] Failed to create/send invitation:", err);
       // Don't block gift creation on invitation failure
     }
@@ -146,7 +147,7 @@ export async function createGift(
     sendGiftReceivedEmail(input.recipientEmail, {
       recipientName: input.recipientName,
       unlockAt: new Date(input.unlockAt),
-    }).catch((err) => console.error("[email] gift_received failed:", err));
+    }).catch((err: unknown) => console.error("[email] gift_received failed:", err));
   }
 
   return { gift, paymentUrl: payment.authorizationUrl };
@@ -180,9 +181,14 @@ export async function updateGiftStatus(id: string, status: GiftStatus): Promise<
   gifts.set(id, gift);
 
   // Create audit log for status change
-  const eventType = status === "funded" ? "gift_funded" as const : 
-                    status === "claimed" ? "gift_claimed" as const :
-                    status === "cancelled" ? "gift_cancelled" as const : null;
+  const eventType =
+    status === "funded"
+      ? ("gift_funded" as const)
+      : status === "claimed"
+        ? ("gift_claimed" as const)
+        : status === "cancelled"
+          ? ("gift_cancelled" as const)
+          : null;
 
   if (eventType) {
     await createAuditLog({

@@ -132,12 +132,7 @@ export default function LoginPage() {
               />
               {/* Standalone error for the OTP step (also surfaced via Input's error prop above) */}
               {error && (
-                <p
-                  id={errorId}
-                  className={styles.error}
-                  role="alert"
-                  aria-live="assertive"
-                >
+                <p id={errorId} className={styles.error} role="alert" aria-live="assertive">
                   {error}
                 </p>
               )}

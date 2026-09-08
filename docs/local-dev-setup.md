@@ -6,14 +6,14 @@ This guide walks you through setting up Lumigift on your local machine from scra
 
 ## Prerequisites
 
-| Tool | Minimum version | Install |
-|------|----------------|---------|
-| Node.js | 20 | [nodejs.org](https://nodejs.org) |
-| npm | 10 | bundled with Node.js |
-| Git | any | [git-scm.com](https://git-scm.com) |
-| Docker & Docker Compose | any | [docs.docker.com](https://docs.docker.com/get-docker/) |
-| Rust + Cargo | stable | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` |
-| Stellar CLI | latest | see [Stellar CLI docs](https://developers.stellar.org/docs/tools/developer-tools/cli/stellar-cli) |
+| Tool                    | Minimum version | Install                                                                                           |
+| ----------------------- | --------------- | ------------------------------------------------------------------------------------------------- | --- |
+| Node.js                 | 20              | [nodejs.org](https://nodejs.org)                                                                  |
+| npm                     | 10              | bundled with Node.js                                                                              |
+| Git                     | any             | [git-scm.com](https://git-scm.com)                                                                |
+| Docker & Docker Compose | any             | [docs.docker.com](https://docs.docker.com/get-docker/)                                            |
+| Rust + Cargo            | stable          | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs                                        | sh` |
+| Stellar CLI             | latest          | see [Stellar CLI docs](https://developers.stellar.org/docs/tools/developer-tools/cli/stellar-cli) |
 
 > **Windows users:** all commands below assume **WSL 2** (Ubuntu 22.04 recommended).  
 > Install WSL: `wsl --install` in an elevated PowerShell, then reopen a WSL terminal.
@@ -23,7 +23,7 @@ This guide walks you through setting up Lumigift on your local machine from scra
 ## 1. Clone and install dependencies
 
 ```bash
-git clone https://github.com/JosephOnuh/Lumigift-lumigift.git
+git clone https://github.com/joekeyz8/Lumigift-lumigift.git
 cd Lumigift-lumigift
 npm install
 ```
@@ -247,10 +247,10 @@ stellar account show lumigift-dev --network testnet
 
 ### Summary of values to copy into `.env.local`
 
-| Variable | Where to get it |
-|----------|----------------|
-| `STELLAR_SERVER_SECRET_KEY` | `stellar keys show lumigift-dev` |
-| `USDC_ISSUER` | `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5` (fixed) |
+| Variable                    | Where to get it                                                    |
+| --------------------------- | ------------------------------------------------------------------ |
+| `STELLAR_SERVER_SECRET_KEY` | `stellar keys show lumigift-dev`                                   |
+| `USDC_ISSUER`               | `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5` (fixed) |
 
 ---
 
@@ -264,10 +264,10 @@ stellar account show lumigift-dev --network testnet
 
 **Test card numbers** (use these in the checkout flow):
 
-| Card number | CVV | Expiry | Result |
-|-------------|-----|--------|--------|
-| 4084 0840 8408 4081 | 408 | 01/99 | Success |
-| 4084 0840 8408 4081 | 408 | 01/99 | Declined (use wrong CVV) |
+| Card number         | CVV | Expiry | Result                   |
+| ------------------- | --- | ------ | ------------------------ |
+| 4084 0840 8408 4081 | 408 | 01/99  | Success                  |
+| 4084 0840 8408 4081 | 408 | 01/99  | Declined (use wrong CVV) |
 
 ---
 

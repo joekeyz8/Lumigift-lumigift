@@ -10,11 +10,11 @@ The Lumigift escrow contract (`contracts/escrow`) locks USDC on behalf of users 
 
 ### Contract: `contracts/escrow/src/lib.rs`
 
-| Function | Description |
-|---|---|
+| Function     | Description                                                    |
+| ------------ | -------------------------------------------------------------- |
 | `initialize` | Deploys escrow state, transfers USDC from sender into contract |
-| `claim` | Releases funds to recipient after unlock time |
-| `get_state` | Read-only view of escrow state |
+| `claim`      | Releases funds to recipient after unlock time                  |
+| `get_state`  | Read-only view of escrow state                                 |
 
 ### Areas of Focus
 
@@ -30,13 +30,13 @@ The Lumigift escrow contract (`contracts/escrow`) locks USDC on behalf of users 
 
 ## Recommended Audit Firms
 
-| Firm | Specialization | Website |
-|---|---|---|
-| OtterSec | Soroban / Rust smart contracts | https://osec.io |
-| Halborn | Stellar ecosystem, blockchain security | https://halborn.com |
-| Trail of Bits | Rust, formal verification | https://trailofbits.com |
-| Certora | Formal verification for smart contracts | https://certora.com |
-| Kudelski Security | Blockchain audits | https://kudelskisecurity.com |
+| Firm              | Specialization                          | Website                      |
+| ----------------- | --------------------------------------- | ---------------------------- |
+| OtterSec          | Soroban / Rust smart contracts          | https://osec.io              |
+| Halborn           | Stellar ecosystem, blockchain security  | https://halborn.com          |
+| Trail of Bits     | Rust, formal verification               | https://trailofbits.com      |
+| Certora           | Formal verification for smart contracts | https://certora.com          |
+| Kudelski Security | Blockchain audits                       | https://kudelskisecurity.com |
 
 > Prioritize firms with demonstrated Soroban/Stellar experience. OtterSec and Halborn have prior Stellar ecosystem work.
 
@@ -44,29 +44,29 @@ The Lumigift escrow contract (`contracts/escrow`) locks USDC on behalf of users 
 
 ## Known Risks & Mitigations
 
-| Risk | Severity | Mitigation |
-|---|---|---|
-| Fake token address passed to `initialize` | Critical | Validate `token == USDC_CONTRACT_ADDRESS` in `initialize` (see issue #51) |
-| Re-initialization attack | High | `already initialized` panic guard on `DataKey::Sender` presence |
-| Premature claim | High | `unlock_time` check against `env.ledger().timestamp()` |
-| Unauthorized claim | High | `recipient.require_auth()` enforced by Soroban host |
-| Contract upgrade path | Medium | No upgrade mechanism — contract is immutable; document this explicitly |
-| Ledger timestamp manipulation | Low | Soroban ledger timestamps are consensus-driven; not manipulable by a single party |
-| Integer overflow on amount | Low | Soroban uses `i128`; amounts in stroops are well within range |
+| Risk                                      | Severity | Mitigation                                                                        |
+| ----------------------------------------- | -------- | --------------------------------------------------------------------------------- |
+| Fake token address passed to `initialize` | Critical | Validate `token == USDC_CONTRACT_ADDRESS` in `initialize` (see issue #51)         |
+| Re-initialization attack                  | High     | `already initialized` panic guard on `DataKey::Sender` presence                   |
+| Premature claim                           | High     | `unlock_time` check against `env.ledger().timestamp()`                            |
+| Unauthorized claim                        | High     | `recipient.require_auth()` enforced by Soroban host                               |
+| Contract upgrade path                     | Medium   | No upgrade mechanism — contract is immutable; document this explicitly            |
+| Ledger timestamp manipulation             | Low      | Soroban ledger timestamps are consensus-driven; not manipulable by a single party |
+| Integer overflow on amount                | Low      | Soroban uses `i128`; amounts in stroops are well within range                     |
 
 ---
 
 ## Audit Timeline
 
-| Milestone | Target Date |
-|---|---|
+| Milestone                             | Target Date                |
+| ------------------------------------- | -------------------------- |
 | Finalize contract code & freeze scope | 2 weeks before audit start |
-| Firm selection & NDA signed | 4 weeks before mainnet |
-| Audit engagement begins | 6 weeks before mainnet |
-| Preliminary findings delivered | 8 weeks before mainnet |
-| Fixes implemented & re-review | 10 weeks before mainnet |
-| Final audit report published | 2 weeks before mainnet |
-| Mainnet deployment | TBD |
+| Firm selection & NDA signed           | 4 weeks before mainnet     |
+| Audit engagement begins               | 6 weeks before mainnet     |
+| Preliminary findings delivered        | 8 weeks before mainnet     |
+| Fixes implemented & re-review         | 10 weeks before mainnet    |
+| Final audit report published          | 2 weeks before mainnet     |
+| Mainnet deployment                    | TBD                        |
 
 ---
 
@@ -81,12 +81,12 @@ A bug bounty program is recommended to complement the formal audit and provide o
 
 ### Severity & Rewards
 
-| Severity | Example | Reward |
-|---|---|---|
-| Critical | Drain escrow funds, bypass time-lock | $5,000 – $20,000 USDC |
-| High | Unauthorized claim, re-initialization | $1,000 – $5,000 USDC |
-| Medium | Incorrect event data, DoS | $250 – $1,000 USDC |
-| Low | Gas inefficiency, informational | $50 – $250 USDC |
+| Severity | Example                               | Reward                |
+| -------- | ------------------------------------- | --------------------- |
+| Critical | Drain escrow funds, bypass time-lock  | $5,000 – $20,000 USDC |
+| High     | Unauthorized claim, re-initialization | $1,000 – $5,000 USDC  |
+| Medium   | Incorrect event data, DoS             | $250 – $1,000 USDC    |
+| Low      | Gas inefficiency, informational       | $50 – $250 USDC       |
 
 ### Recommended Platforms
 

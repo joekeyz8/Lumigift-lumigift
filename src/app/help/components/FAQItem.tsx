@@ -36,14 +36,14 @@ export function FAQItem({ id, question, answer, className }: FAQItemProps) {
         type="button"
       >
         <span className={styles.questionText}>{question}</span>
-        <span 
+        <span
           className={`${styles.icon} ${isExpanded ? styles.iconExpanded : ""}`}
           aria-hidden="true"
         >
           ▼
         </span>
       </button>
-      
+
       <div
         className={`${styles.answer} ${isExpanded ? styles.answerExpanded : ""}`}
         id={`faq-answer-${id}`}

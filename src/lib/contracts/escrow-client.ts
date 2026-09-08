@@ -26,13 +26,13 @@ import {
 
 export enum EscrowError {
   AlreadyInitialized = 1,
-  AlreadyClaimed     = 2,
-  StillLocked        = 3,
-  NotInitialized     = 4,
-  Unauthorized       = 5,
-  AlreadyCancelled   = 6,
-  InvalidAmount      = 7,
-  InvalidUnlockTime  = 8,
+  AlreadyClaimed = 2,
+  StillLocked = 3,
+  NotInitialized = 4,
+  Unauthorized = 5,
+  AlreadyCancelled = 6,
+  InvalidAmount = 7,
+  InvalidUnlockTime = 8,
 }
 
 export class EscrowContractError extends Error {
@@ -45,9 +45,9 @@ export class EscrowContractError extends Error {
 // ─── Return types ─────────────────────────────────────────────────────────────
 
 export interface EscrowState {
-  recipient: string;   // Stellar public key (G…)
-  amount: bigint;      // stroops (7 decimal places)
-  unlockTime: bigint;  // Unix timestamp (seconds)
+  recipient: string; // Stellar public key (G…)
+  amount: bigint; // stroops (7 decimal places)
+  unlockTime: bigint; // Unix timestamp (seconds)
   claimed: boolean;
 }
 
@@ -168,7 +168,8 @@ export class EscrowClient {
       throw parseContractError(simResult.error);
     }
 
-    const returnVal = (simResult as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+    const returnVal = (simResult as SorobanRpc.Api.SimulateTransactionSuccessResponse).result
+      ?.retval;
     if (!returnVal) {
       throw new Error("get_state simulation returned no value");
     }
@@ -224,9 +225,9 @@ function decodeGetStateResult(val: xdr.ScVal): EscrowState {
   const [recipientVal, amountVal, unlockTimeVal, claimedVal] = items;
   return {
     recipient: Address.fromScVal(recipientVal).toString(),
-    amount:    BigInt(scValToNative(amountVal) as number | bigint),
+    amount: BigInt(scValToNative(amountVal) as number | bigint),
     unlockTime: BigInt(scValToNative(unlockTimeVal) as number | bigint),
-    claimed:   scValToNative(claimedVal) as boolean,
+    claimed: scValToNative(claimedVal) as boolean,
   };
 }
 
@@ -252,17 +253,15 @@ function sleep(ms: number): Promise<void> {
  *           STELLAR_ESCROW_CONTRACT_ID, STELLAR_SERVER_PUBLIC_KEY
  */
 export function createEscrowClient(): EscrowClient {
-  const rpcUrl = process.env.STELLAR_RPC_URL ?? (
-    process.env.STELLAR_NETWORK === "mainnet"
+  const rpcUrl =
+    process.env.STELLAR_RPC_URL ??
+    (process.env.STELLAR_NETWORK === "mainnet"
       ? "https://soroban-rpc.stellar.org"
-      : "https://soroban-testnet.stellar.org"
-  );
+      : "https://soroban-testnet.stellar.org");
 
-  const networkPassphrase = process.env.STELLAR_NETWORK_PASSPHRASE ?? (
-    process.env.STELLAR_NETWORK === "mainnet"
-      ? Networks.PUBLIC
-      : Networks.TESTNET
-  );
+  const networkPassphrase =
+    process.env.STELLAR_NETWORK_PASSPHRASE ??
+    (process.env.STELLAR_NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET);
 
   const contractId = process.env.STELLAR_ESCROW_CONTRACT_ID;
   if (!contractId) throw new Error("Missing STELLAR_ESCROW_CONTRACT_ID");

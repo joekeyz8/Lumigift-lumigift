@@ -13,7 +13,10 @@ function sign(params: Record<string, string | number>): string {
     .sort()
     .map((k) => `${k}=${params[k]}`)
     .join("&");
-  return crypto.createHash("sha256").update(payload + secret).digest("hex");
+  return crypto
+    .createHash("sha256")
+    .update(payload + secret)
+    .digest("hex");
 }
 
 export async function POST(req: NextRequest) {
@@ -74,12 +77,15 @@ export async function POST(req: NextRequest) {
   if (!cloudRes.ok) {
     const err = await cloudRes.json().catch(() => ({}));
     return NextResponse.json<ApiResponse<never>>(
-      { success: false, error: (err as { error?: { message?: string } })?.error?.message ?? "Upload failed" },
+      {
+        success: false,
+        error: (err as { error?: { message?: string } })?.error?.message ?? "Upload failed",
+      },
       { status: 502 }
     );
   }
 
-  const data = await cloudRes.json() as { secure_url: string; public_id: string };
+  const data = (await cloudRes.json()) as { secure_url: string; public_id: string };
   return NextResponse.json<ApiResponse<{ url: string; publicId: string }>>({
     success: true,
     data: { url: data.secure_url, publicId: data.public_id },

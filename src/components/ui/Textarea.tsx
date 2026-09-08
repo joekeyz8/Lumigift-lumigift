@@ -26,7 +26,11 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
           {...props}
         />
         {hint && !error && (
-          <span id={`${textareaId}-hint`} className="input-error-msg" style={{ color: "var(--color-text-muted)" }}>
+          <span
+            id={`${textareaId}-hint`}
+            className="input-error-msg"
+            style={{ color: "var(--color-text-muted)" }}
+          >
             {hint}
           </span>
         )}

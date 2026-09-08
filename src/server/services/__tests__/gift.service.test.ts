@@ -157,9 +157,7 @@ describe("createGift", () => {
     } as Gift);
 
     // ₦999,000 + ₦5,000 = ₦1,004,000 > ₦1,000,000 daily limit
-    await expect(createGift(SENDER_ID, baseInput)).rejects.toThrow(
-      /daily sending limit/i
-    );
+    await expect(createGift(SENDER_ID, baseInput)).rejects.toThrow(/daily sending limit/i);
   });
 
   it("does not count yesterday's gifts toward today's daily limit", async () => {
@@ -264,10 +262,7 @@ describe("updateGiftStatus", () => {
   });
 
   it("returns null for a non-existent gift id", async () => {
-    const result = await updateGiftStatus(
-      "00000000-0000-0000-0000-000000000000",
-      "funded"
-    );
+    const result = await updateGiftStatus("00000000-0000-0000-0000-000000000000", "funded");
     expect(result).toBeNull();
   });
 

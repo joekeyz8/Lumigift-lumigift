@@ -13,7 +13,7 @@ function buildClaimUrl(giftId: string): string {
   const base =
     typeof window !== "undefined"
       ? window.location.origin
-      : process.env.NEXT_PUBLIC_APP_URL ?? "";
+      : (process.env.NEXT_PUBLIC_APP_URL ?? "");
   return `${base}/gifts/${giftId}`;
 }
 
@@ -48,12 +48,7 @@ export function ShareGift({ giftId, recipientName }: ShareGiftProps) {
 
   return (
     <div className={styles.container}>
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={handleShare}
-        aria-label="Share gift link"
-      >
+      <Button variant="secondary" size="sm" onClick={handleShare} aria-label="Share gift link">
         {copied ? "✓ Copied!" : "Share"}
       </Button>
 
@@ -67,11 +62,7 @@ export function ShareGift({ giftId, recipientName }: ShareGiftProps) {
         WhatsApp
       </a>
 
-      <a
-        href={smsUrl}
-        className={styles.link}
-        aria-label="Share via SMS"
-      >
+      <a href={smsUrl} className={styles.link} aria-label="Share via SMS">
         SMS
       </a>
     </div>

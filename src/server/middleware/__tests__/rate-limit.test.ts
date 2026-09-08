@@ -74,9 +74,7 @@ describe("rateLimit", () => {
 
   it("allows exactly `limit` requests then blocks", () => {
     const key = "test-exact-+2348066666666";
-    const results = Array.from({ length: LIMIT + 2 }, () =>
-      rateLimit(key, LIMIT, WINDOW)
-    );
+    const results = Array.from({ length: LIMIT + 2 }, () => rateLimit(key, LIMIT, WINDOW));
     expect(results.slice(0, LIMIT)).toEqual(Array(LIMIT).fill(true));
     expect(results.slice(LIMIT)).toEqual(Array(2).fill(false));
   });

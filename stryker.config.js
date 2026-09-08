@@ -26,7 +26,7 @@ const config = {
     break: 70,
   },
   dashboard: {
-    project: "github.com/JosephOnuh/Lumigift-lumigift",
+    project: "github.com/joekeyz8/Lumigift-lumigift",
     version: "main",
   },
   timeoutMS: 60000,

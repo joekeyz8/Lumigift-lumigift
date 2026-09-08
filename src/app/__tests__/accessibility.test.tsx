@@ -35,8 +35,14 @@ jest.mock("next/navigation", () => ({
 }));
 
 jest.mock("next/link", () => {
-  const Link = ({ href, children, ...rest }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) => (
-    <a href={href} {...rest}>{children}</a>
+  const Link = ({
+    href,
+    children,
+    ...rest
+  }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) => (
+    <a href={href} {...rest}>
+      {children}
+    </a>
   );
   Link.displayName = "Link";
   return Link;
@@ -48,6 +54,13 @@ jest.mock("next-auth/react", () => ({
 }));
 
 jest.mock("@tanstack/react-query", () => ({
+  useQuery: () => ({
+    data: undefined,
+    status: "pending",
+    isLoading: true,
+    isError: false,
+    error: null,
+  }),
   useInfiniteQuery: () => ({
     data: undefined,
     fetchNextPage: jest.fn(),
@@ -74,9 +87,7 @@ async function expectNoBlockingViolations(container: HTMLElement) {
   );
 
   if (blocking.length > 0) {
-    const summary = blocking
-      .map((v) => `[${v.impact}] ${v.id}: ${v.description}`)
-      .join("\n");
+    const summary = blocking.map((v) => `[${v.impact}] ${v.id}: ${v.description}`).join("\n");
     throw new Error(`Axe found ${blocking.length} critical/serious violation(s):\n${summary}`);
   }
 }
@@ -136,14 +147,10 @@ describe("Accessibility audits (axe-core)", () => {
       runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] },
     });
     const blocking = results.violations.filter(
-      (v) =>
-        (v.impact === "critical" || v.impact === "serious") &&
-        v.id !== "nested-interactive" // known pre-existing issue, see above
+      (v) => (v.impact === "critical" || v.impact === "serious") && v.id !== "nested-interactive" // known pre-existing issue, see above
     );
     if (blocking.length > 0) {
-      const summary = blocking
-        .map((v) => `[${v.impact}] ${v.id}: ${v.description}`)
-        .join("\n");
+      const summary = blocking.map((v) => `[${v.impact}] ${v.id}: ${v.description}`).join("\n");
       throw new Error(`Axe found ${blocking.length} critical/serious violation(s):\n${summary}`);
     }
   });

@@ -13,12 +13,7 @@
  *                  data:  (sender: Address, amount: i128)
  */
 
-import {
-  rpc as SorobanRpc,
-  Address,
-  scValToNative,
-  xdr,
-} from "@stellar/stellar-sdk";
+import { rpc as SorobanRpc, Address, scValToNative, xdr } from "@stellar/stellar-sdk";
 
 // ─── Event type discriminants ─────────────────────────────────────────────────
 
@@ -86,9 +81,7 @@ export interface FetchEventsResult {
  * Fetches Soroban contract events for the escrow contract from the RPC node,
  * starting after `startCursor`.
  */
-export async function fetchEscrowEvents(
-  opts: FetchEventsOptions
-): Promise<FetchEventsResult> {
+export async function fetchEscrowEvents(opts: FetchEventsOptions): Promise<FetchEventsResult> {
   const rpc = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
 
   const isGenesis = opts.startCursor === CURSOR_GENESIS;
@@ -142,9 +135,7 @@ export async function fetchEscrowEvents(
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
-function parseEventResponse(
-  raw: SorobanRpc.Api.EventResponse
-): EscrowEvent | null {
+function parseEventResponse(raw: SorobanRpc.Api.EventResponse): EscrowEvent | null {
   // In stellar-sdk v15, EventResponse.topic is already xdr.ScVal[]
   // and EventResponse.value is already xdr.ScVal
   if (!raw.topic?.length) return null;

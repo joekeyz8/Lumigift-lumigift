@@ -83,7 +83,8 @@ export default function DashboardPage() {
         ) : (
           <>
             <p className={styles.count}>
-              Showing {(page - 1) * DEFAULT_LIMIT + 1}–{Math.min(page * DEFAULT_LIMIT, total)} of {total} gifts
+              Showing {(page - 1) * DEFAULT_LIMIT + 1}–{Math.min(page * DEFAULT_LIMIT, total)} of{" "}
+              {total} gifts
             </p>
             <div className={styles.grid}>
               {gifts.map((gift) => (
@@ -98,7 +99,9 @@ export default function DashboardPage() {
               >
                 Previous
               </button>
-              <span>Page {page} of {totalPages}</span>
+              <span>
+                Page {page} of {totalPages}
+              </span>
               <button
                 className="btn btn--secondary"
                 onClick={() => setPage((p) => p + 1)}

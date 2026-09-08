@@ -13,11 +13,7 @@ export interface AuditEntry {
 
 const auditLog: AuditEntry[] = [];
 
-export function logAdminAction(
-  adminId: string,
-  action: string,
-  targetId: string
-): void {
+export function logAdminAction(adminId: string, action: string, targetId: string): void {
   auditLog.push({
     id: crypto.randomUUID(),
     adminId,
@@ -34,7 +30,7 @@ export function getAuditLog(): AuditEntry[] {
 // ─── Admin gift queries ───────────────────────────────────────────────────────
 
 export interface AdminGiftQuery {
-  search?: string;   // matches recipientName (case-insensitive)
+  search?: string; // matches recipientName (case-insensitive)
   status?: GiftStatus;
   cursor?: string;
   limit?: number;
@@ -49,9 +45,7 @@ export interface AdminGiftPage {
 export function adminListGifts(query: AdminGiftQuery): AdminGiftPage {
   const limit = Math.min(query.limit ?? 20, 100);
 
-  let all = [...gifts.values()].sort(
-    (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
-  );
+  let all = [...gifts.values()].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
   if (query.status) {
     all = all.filter((g) => g.status === query.status);
@@ -62,13 +56,10 @@ export function adminListGifts(query: AdminGiftQuery): AdminGiftPage {
     all = all.filter((g) => g.recipientName.toLowerCase().includes(term));
   }
 
-  const startIndex = query.cursor
-    ? all.findIndex((g) => g.id === query.cursor) + 1
-    : 0;
+  const startIndex = query.cursor ? all.findIndex((g) => g.id === query.cursor) + 1 : 0;
 
   const page = all.slice(startIndex, startIndex + limit);
-  const nextCursor =
-    startIndex + limit < all.length ? page[page.length - 1]?.id ?? null : null;
+  const nextCursor = startIndex + limit < all.length ? (page[page.length - 1]?.id ?? null) : null;
 
   return { gifts: page, total: all.length, nextCursor };
 }

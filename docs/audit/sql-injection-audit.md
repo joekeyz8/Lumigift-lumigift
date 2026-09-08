@@ -16,26 +16,26 @@ All files in `src/` and `scripts/` that call `pool.query()` were reviewed for ra
 
 ## Findings
 
-| File | Query | Parameterized? | Notes |
-|------|-------|---------------|-------|
-| `src/lib/auth.ts` | `SELECT 1 FROM known_devices WHERE user_id = $1 AND fingerprint = $2` | ✅ Yes | |
-| `src/lib/auth.ts` | `INSERT INTO known_devices (user_id, fingerprint) VALUES ($1, $2)` | ✅ Yes | |
-| `src/lib/auth.ts` | `UPDATE known_devices SET last_seen_at = NOW() WHERE user_id = $1 AND fingerprint = $2` | ✅ Yes | |
-| `src/lib/auth.ts` | `SELECT id, phone, name FROM users WHERE phone = $1` | ✅ Yes | |
-| `src/app/api/v1/users/route.ts` | `SELECT 1 FROM users WHERE phone = $1 LIMIT 1` | ✅ Yes | |
-| `src/app/api/v1/auth/register/route.ts` | `SELECT 1 FROM users WHERE phone = $1 LIMIT 1` | ✅ Yes | |
-| `src/app/api/v1/auth/register/route.ts` | `INSERT INTO users (id, phone, display_name) VALUES ($1, $2, $3)` | ✅ Yes | |
-| `src/app/api/v1/auth/report-login/route.ts` | `INSERT INTO suspicious_login_reports (user_id, fingerprint) VALUES ($1, $2)` | ✅ Yes | |
-| `src/server/services/gift.service.ts` | `SELECT display_name FROM users WHERE id = $1` | ✅ Yes | |
-| `src/server/services/invitation.service.ts` | `INSERT INTO gift_invitations … VALUES ($1, $2, $3, $4, $5, $6)` | ✅ Yes | |
-| `src/server/services/invitation.service.ts` | `SELECT … FROM gift_invitations WHERE token = $1` | ✅ Yes | |
-| `src/server/services/invitation.service.ts` | `UPDATE gift_invitations SET status = 'accepted' … WHERE id = $1` | ✅ Yes | |
-| `src/server/services/invitation.service.ts` | `UPDATE gift_invitations SET status = 'claimed' … WHERE id = $1` | ✅ Yes | |
-| `src/server/services/invitation.service.ts` | `SELECT … FROM gift_invitations WHERE recipient_phone = $1 AND gift_id = $2` | ✅ Yes | |
-| `scripts/seed-test-db.ts` | DDL statements (CREATE TABLE, CREATE INDEX) | ✅ N/A | No user input; static schema only |
-| `scripts/seed-test-db.ts` | `INSERT INTO users … VALUES ($1, $2, $3)` | ✅ Yes | |
-| `scripts/seed-test-db.ts` | `INSERT INTO gifts … VALUES ($1, $2, …)` | ✅ Yes | |
-| `src/app/api/v1/payments/__tests__/webhook.integration.test.ts` | Various test queries | ✅ Yes | Test file; no user input |
+| File                                                            | Query                                                                                   | Parameterized? | Notes                             |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------- | -------------- | --------------------------------- |
+| `src/lib/auth.ts`                                               | `SELECT 1 FROM known_devices WHERE user_id = $1 AND fingerprint = $2`                   | ✅ Yes         |                                   |
+| `src/lib/auth.ts`                                               | `INSERT INTO known_devices (user_id, fingerprint) VALUES ($1, $2)`                      | ✅ Yes         |                                   |
+| `src/lib/auth.ts`                                               | `UPDATE known_devices SET last_seen_at = NOW() WHERE user_id = $1 AND fingerprint = $2` | ✅ Yes         |                                   |
+| `src/lib/auth.ts`                                               | `SELECT id, phone, name FROM users WHERE phone = $1`                                    | ✅ Yes         |                                   |
+| `src/app/api/v1/users/route.ts`                                 | `SELECT 1 FROM users WHERE phone = $1 LIMIT 1`                                          | ✅ Yes         |                                   |
+| `src/app/api/v1/auth/register/route.ts`                         | `SELECT 1 FROM users WHERE phone = $1 LIMIT 1`                                          | ✅ Yes         |                                   |
+| `src/app/api/v1/auth/register/route.ts`                         | `INSERT INTO users (id, phone, display_name) VALUES ($1, $2, $3)`                       | ✅ Yes         |                                   |
+| `src/app/api/v1/auth/report-login/route.ts`                     | `INSERT INTO suspicious_login_reports (user_id, fingerprint) VALUES ($1, $2)`           | ✅ Yes         |                                   |
+| `src/server/services/gift.service.ts`                           | `SELECT display_name FROM users WHERE id = $1`                                          | ✅ Yes         |                                   |
+| `src/server/services/invitation.service.ts`                     | `INSERT INTO gift_invitations … VALUES ($1, $2, $3, $4, $5, $6)`                        | ✅ Yes         |                                   |
+| `src/server/services/invitation.service.ts`                     | `SELECT … FROM gift_invitations WHERE token = $1`                                       | ✅ Yes         |                                   |
+| `src/server/services/invitation.service.ts`                     | `UPDATE gift_invitations SET status = 'accepted' … WHERE id = $1`                       | ✅ Yes         |                                   |
+| `src/server/services/invitation.service.ts`                     | `UPDATE gift_invitations SET status = 'claimed' … WHERE id = $1`                        | ✅ Yes         |                                   |
+| `src/server/services/invitation.service.ts`                     | `SELECT … FROM gift_invitations WHERE recipient_phone = $1 AND gift_id = $2`            | ✅ Yes         |                                   |
+| `scripts/seed-test-db.ts`                                       | DDL statements (CREATE TABLE, CREATE INDEX)                                             | ✅ N/A         | No user input; static schema only |
+| `scripts/seed-test-db.ts`                                       | `INSERT INTO users … VALUES ($1, $2, $3)`                                               | ✅ Yes         |                                   |
+| `scripts/seed-test-db.ts`                                       | `INSERT INTO gifts … VALUES ($1, $2, …)`                                                | ✅ Yes         |                                   |
+| `src/app/api/v1/payments/__tests__/webhook.integration.test.ts` | Various test queries                                                                    | ✅ Yes         | Test file; no user input          |
 
 ## Conclusion
 

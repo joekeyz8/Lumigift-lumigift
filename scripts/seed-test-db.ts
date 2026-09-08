@@ -14,8 +14,7 @@ import { Pool } from "pg";
 import { createHash } from "crypto";
 
 const DB_URL =
-  process.env.TEST_DATABASE_URL ??
-  "postgresql://lumigift:lumigift@localhost:5432/lumigift_test";
+  process.env.TEST_DATABASE_URL ?? "postgresql://lumigift:lumigift@localhost:5432/lumigift_test";
 
 function hashPhone(phone: string): string {
   return createHash("sha256").update(phone).digest("hex");

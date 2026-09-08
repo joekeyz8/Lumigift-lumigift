@@ -34,9 +34,9 @@ export interface Gift {
   mediaUrl?: string;
   unlockAt: Date;
   status: GiftStatus;
-  contractId?: string;       // Soroban escrow contract instance
-  stellarTxHash?: string;    // funding transaction hash
-  claimTxHash?: string;      // claim transaction hash
+  contractId?: string; // Soroban escrow contract instance
+  stellarTxHash?: string; // funding transaction hash
+  claimTxHash?: string; // claim transaction hash
   createdAt: Date;
   updatedAt: Date;
 }

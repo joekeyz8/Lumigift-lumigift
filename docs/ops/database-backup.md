@@ -26,6 +26,7 @@ terraform apply -target=aws_db_instance.postgres
 ```
 
 RDS will automatically:
+
 - Take a full snapshot once per day during `backup_window`
 - Stream WAL logs continuously for PITR
 - Retain all backups for **30 days**, then delete them automatically
@@ -78,11 +79,11 @@ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Backup uploaded: ${FILE}"
 
 ## Retention policy
 
-| Backup type | Retention | Storage |
-|---|---|---|
-| RDS automated snapshots | 30 days | Managed by AWS |
-| RDS manual snapshots | Until deleted manually | Managed by AWS |
-| pg_dump files (S3) | 30 days | S3 lifecycle rule (see below) |
+| Backup type             | Retention              | Storage                       |
+| ----------------------- | ---------------------- | ----------------------------- |
+| RDS automated snapshots | 30 days                | Managed by AWS                |
+| RDS manual snapshots    | Until deleted manually | Managed by AWS                |
+| pg_dump files (S3)      | 30 days                | S3 lifecycle rule (see below) |
 
 **S3 lifecycle rule** — apply to the `lumigift-backups` bucket to auto-expire old dumps:
 
@@ -193,8 +194,8 @@ Restore procedures must be tested **quarterly** against a staging environment:
 4. Document the test date and outcome in the table below.
 
 | Date | Tester | Method | Outcome |
-|---|---|---|---|
-| — | — | — | — |
+| ---- | ------ | ------ | ------- |
+| —    | —      | —      | —       |
 
 ---
 
@@ -241,10 +242,10 @@ The backup script (`lumigift-backup.sh`) uses `set -euo pipefail` — any failur
 
 ## Quick reference
 
-| Task | Command / location |
-|---|---|
-| List RDS snapshots | `aws rds describe-db-snapshots --db-instance-identifier lumigift-prod` |
-| Create manual snapshot | `aws rds create-db-snapshot --db-instance-identifier lumigift-prod --db-snapshot-identifier lumigift-manual-YYYYMMDD` |
-| List S3 backups | `aws s3 ls s3://lumigift-backups/postgres/` |
-| Check backup retention setting | AWS Console → RDS → lumigift-prod → Maintenance & backups |
-| Terraform resource | `infra/terraform/main.tf` → `aws_db_instance.postgres` |
+| Task                           | Command / location                                                                                                    |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| List RDS snapshots             | `aws rds describe-db-snapshots --db-instance-identifier lumigift-prod`                                                |
+| Create manual snapshot         | `aws rds create-db-snapshot --db-instance-identifier lumigift-prod --db-snapshot-identifier lumigift-manual-YYYYMMDD` |
+| List S3 backups                | `aws s3 ls s3://lumigift-backups/postgres/`                                                                           |
+| Check backup retention setting | AWS Console → RDS → lumigift-prod → Maintenance & backups                                                             |
+| Terraform resource             | `infra/terraform/main.tf` → `aws_db_instance.postgres`                                                                |

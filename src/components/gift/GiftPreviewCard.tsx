@@ -29,26 +29,34 @@ export function GiftPreviewCard({ data, template, onEdit }: GiftPreviewCardProps
       <div className={styles.row}>
         <span className={styles.rowLabel}>Phone</span>
         <span>{data.recipientPhone || "—"}</span>
-        <button type="button" className={styles.edit} onClick={() => onEdit(1)}>Edit</button>
+        <button type="button" className={styles.edit} onClick={() => onEdit(1)}>
+          Edit
+        </button>
       </div>
 
       <div className={styles.row}>
         <span className={styles.rowLabel}>Amount</span>
         <span>{data.amountNgn ? `₦${data.amountNgn.toLocaleString("en-NG")}` : "—"}</span>
-        <button type="button" className={styles.edit} onClick={() => onEdit(2)}>Edit</button>
+        <button type="button" className={styles.edit} onClick={() => onEdit(2)}>
+          Edit
+        </button>
       </div>
 
       <div className={styles.row}>
         <span className={styles.rowLabel}>Unlocks</span>
         <span>{unlockDate ? format(unlockDate, "MMM d, yyyy 'at' h:mm a") : "—"}</span>
-        <button type="button" className={styles.edit} onClick={() => onEdit(3)}>Edit</button>
+        <button type="button" className={styles.edit} onClick={() => onEdit(3)}>
+          Edit
+        </button>
       </div>
 
       {data.message && (
         <div className={styles.message}>
           <span className={styles.rowLabel}>Message</span>
           <p>{data.message}</p>
-          <button type="button" className={styles.edit} onClick={() => onEdit(2)}>Edit</button>
+          <button type="button" className={styles.edit} onClick={() => onEdit(2)}>
+            Edit
+          </button>
         </div>
       )}
 

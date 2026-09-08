@@ -80,9 +80,7 @@ describe("stripHtmlTags", () => {
   });
 
   it("should handle attributes in tags", () => {
-    expect(
-      stripHtmlTags('<a href="https://example.com" onclick="evil()">Link</a>')
-    ).toBe("Link");
+    expect(stripHtmlTags('<a href="https://example.com" onclick="evil()">Link</a>')).toBe("Link");
   });
 
   it("should preserve plain text", () => {

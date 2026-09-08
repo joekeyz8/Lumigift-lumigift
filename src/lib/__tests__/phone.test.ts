@@ -5,20 +5,17 @@ describe("normalizePhone", () => {
   const canonical = "+2348012345678";
 
   const validNigerianInputs: [string, string][] = [
-    ["+2348012345678", canonical],   // already E.164
-    ["2348012345678",  canonical],   // international without +
-    ["08012345678",    canonical],   // local with leading 0
-    ["8012345678",     canonical],   // bare 10-digit
+    ["+2348012345678", canonical], // already E.164
+    ["2348012345678", canonical], // international without +
+    ["08012345678", canonical], // local with leading 0
+    ["8012345678", canonical], // bare 10-digit
     [" +234 801 234 5678 ", canonical], // spaces stripped
-    ["+234-801-234-5678",   canonical], // dashes stripped
+    ["+234-801-234-5678", canonical], // dashes stripped
   ];
 
-  test.each(validNigerianInputs)(
-    "normalizes %s → %s",
-    (input, expected) => {
-      expect(normalizePhone(input)).toBe(expected);
-    }
-  );
+  test.each(validNigerianInputs)("normalizes %s → %s", (input, expected) => {
+    expect(normalizePhone(input)).toBe(expected);
+  });
 
   // ─── Non-Nigerian E.164 numbers should pass through unchanged ───────────────
   it("passes through a valid non-Nigerian E.164 number", () => {
@@ -31,10 +28,10 @@ describe("normalizePhone", () => {
     "0",
     "123",
     "notaphone",
-    "00000000000",   // all zeros
-    "+0123456789",   // leading zero after +
-    "080123456",     // too short (9 digits after 0)
-    "080123456789",  // too long (12 digits after 0)
+    "00000000000", // all zeros
+    "+0123456789", // leading zero after +
+    "080123456", // too short (9 digits after 0)
+    "080123456789", // too long (12 digits after 0)
     "12345678901234567", // 17 digits — exceeds E.164 max
   ];
 

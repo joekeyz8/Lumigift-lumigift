@@ -45,11 +45,17 @@ console.log("Generating TypeScript bindings from WASM…");
 const result = spawnSync(
   "stellar",
   [
-    "contract", "bindings", "typescript",
-    "--wasm", WASM_PATH,
-    "--contract-id", process.env.STELLAR_ESCROW_CONTRACT_ID ?? "PLACEHOLDER_CONTRACT_ID",
-    "--network", process.env.STELLAR_NETWORK ?? "testnet",
-    "--output-dir", TMP_DIR,
+    "contract",
+    "bindings",
+    "typescript",
+    "--wasm",
+    WASM_PATH,
+    "--contract-id",
+    process.env.STELLAR_ESCROW_CONTRACT_ID ?? "PLACEHOLDER_CONTRACT_ID",
+    "--network",
+    process.env.STELLAR_NETWORK ?? "testnet",
+    "--output-dir",
+    TMP_DIR,
     "--overwrite",
   ],
   { encoding: "utf-8", shell: false, cwd: ROOT }
@@ -64,10 +70,7 @@ if (result.error || result.status !== 0) {
 // ─── Locate generated file ────────────────────────────────────────────────────
 
 // The CLI writes an index.ts (or src/index.ts) inside the output dir
-const candidates = [
-  path.join(TMP_DIR, "src", "index.ts"),
-  path.join(TMP_DIR, "index.ts"),
-];
+const candidates = [path.join(TMP_DIR, "src", "index.ts"), path.join(TMP_DIR, "index.ts")];
 const generated = candidates.find(fs.existsSync);
 if (!generated) {
   console.error("Could not locate generated bindings in", TMP_DIR);

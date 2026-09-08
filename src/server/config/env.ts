@@ -94,13 +94,17 @@ export function validateEnv(): Env {
       errorMessage += `\n\nInvalid variables:\n${invalidVars.map((v) => `  - ${v}`).join("\n")}`;
     }
 
-    errorMessage += "\n\nPlease check your .env file and ensure all required variables are set correctly.";
+    errorMessage +=
+      "\n\nPlease check your .env file and ensure all required variables are set correctly.";
 
     console.error(errorMessage);
     // During build (NEXT_PHASE=phase-production-build) or non-production,
     // return a stub so module-level imports don't crash.
     // At runtime with missing vars the app will fail fast on first request.
-    if (process.env.NEXT_PHASE === "phase-production-build" || process.env.NODE_ENV !== "production") {
+    if (
+      process.env.NEXT_PHASE === "phase-production-build" ||
+      process.env.NODE_ENV !== "production"
+    ) {
       // Return a stub with empty strings so destructuring doesn't throw
       return new Proxy({} as Env, { get: () => "" });
     }

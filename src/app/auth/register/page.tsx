@@ -120,8 +120,7 @@ export default function RegisterPage() {
           </form>
 
           <p className={styles.footer}>
-            Already have an account?{" "}
-            <a href="/auth/login">Sign in instead</a>
+            Already have an account? <a href="/auth/login">Sign in instead</a>
           </p>
         </div>
       </div>

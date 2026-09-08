@@ -38,9 +38,7 @@ describe("GET /api/v1/cron/index-events", () => {
   });
 
   it("returns 200 and calls indexEscrowEvents with valid token", async () => {
-    const { indexEscrowEvents } = await import(
-      "@/server/services/event-indexer.service"
-    );
+    const { indexEscrowEvents } = await import("@/server/services/event-indexer.service");
     (indexEscrowEvents as jest.Mock).mockResolvedValue({
       processed: 3,
       skipped: 1,
@@ -57,9 +55,7 @@ describe("GET /api/v1/cron/index-events", () => {
   });
 
   it("returns 500 when indexEscrowEvents throws", async () => {
-    const { indexEscrowEvents } = await import(
-      "@/server/services/event-indexer.service"
-    );
+    const { indexEscrowEvents } = await import("@/server/services/event-indexer.service");
     (indexEscrowEvents as jest.Mock).mockRejectedValue(new Error("RPC down"));
 
     const res = await GET(makeRequest("Bearer test-secret"));

@@ -23,19 +23,14 @@ export function GiftPreview({
   loading,
   error,
 }: GiftPreviewProps) {
-  const unlockDate = format(
-    new Date(data.unlockAt),
-    "MMM d, yyyy 'at' h:mm a"
-  );
+  const unlockDate = format(new Date(data.unlockAt), "MMM d, yyyy 'at' h:mm a");
   const usdcLabel =
     usdcEquivalent === "—" || usdcEquivalent === "…" ? usdcEquivalent : formatUSDC(usdcEquivalent);
 
   return (
     <div className={styles.preview}>
       <h2 className={styles.title}>Review Your Gift</h2>
-      <p className={styles.subtitle}>
-        Please confirm the details before proceeding to payment.
-      </p>
+      <p className={styles.subtitle}>Please confirm the details before proceeding to payment.</p>
 
       <dl className={styles.details}>
         <div className={styles.row}>

@@ -28,7 +28,9 @@
   font-size: var(--text-xs);
   font-weight: var(--font-bold);
   color: var(--color-text-muted);
-  transition: background-color var(--transition-base), border-color var(--transition-base);
+  transition:
+    background-color var(--transition-base),
+    border-color var(--transition-base);
   z-index: 1;
   flex-shrink: 0;
 }

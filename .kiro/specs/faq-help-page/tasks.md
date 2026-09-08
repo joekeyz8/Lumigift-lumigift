@@ -19,7 +19,7 @@ This implementation plan breaks down the FAQ/Help page feature into discrete cod
     - Implement proper 301 redirect for SEO consolidation
     - _Requirements: 1.1_
 
-  - [ ]* 1.3 Write unit tests for page routing
+  - [ ]\* 1.3 Write unit tests for page routing
     - Test `/help` returns 200 for authenticated and unauthenticated users
     - Test `/faq` redirects properly to `/help`
     - Test page metadata is correctly set
@@ -40,7 +40,7 @@ This implementation plan breaks down the FAQ/Help page feature into discrete cod
     - Support optional section descriptions
     - _Requirements: 9.2_
 
-  - [ ]* 2.3 Write unit tests for FAQ components
+  - [ ]\* 2.3 Write unit tests for FAQ components
     - Test FAQItem collapsible behavior and accessibility
     - Test FAQSection renders all items correctly
     - Test keyboard navigation between FAQ items
@@ -101,7 +101,7 @@ This implementation plan breaks down the FAQ/Help page feature into discrete cod
     - Implement proper breadcrumb or navigation pattern
     - _Requirements: 7.4_
 
-  - [ ]* 5.4 Write integration tests for navigation
+  - [ ]\* 5.4 Write integration tests for navigation
     - Test help links work from landing page and dashboard
     - Test back navigation to landing page works
     - Test navigation accessibility with keyboard
@@ -121,7 +121,7 @@ This implementation plan breaks down the FAQ/Help page feature into discrete cod
     - Ensure consistent typography with existing design system
     - _Requirements: 9.1, 9.3_
 
-  - [ ]* 6.3 Write visual regression tests
+  - [ ]\* 6.3 Write visual regression tests
     - Test responsive design across different viewport sizes
     - Test component styling consistency
     - Test accessibility color contrast requirements
@@ -134,13 +134,13 @@ This implementation plan breaks down the FAQ/Help page feature into discrete cod
     - Verify payment provider information is accurate
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5_
 
-  - [ ]* 7.2 Write comprehensive integration tests
+  - [ ]\* 7.2 Write comprehensive integration tests
     - Test complete user journey from navigation to content consumption
     - Test page accessibility with automated tools
     - Test SEO metadata and search engine discoverability
     - _Requirements: 1.3, 9.2, 9.4_
 
-  - [ ]* 7.3 Write end-to-end tests for FAQ page
+  - [ ]\* 7.3 Write end-to-end tests for FAQ page
     - Test page loads correctly for authenticated and unauthenticated users
     - Test all FAQ sections expand and collapse properly
     - Test navigation links work in real browser environment

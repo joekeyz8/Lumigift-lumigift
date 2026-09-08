@@ -98,9 +98,9 @@ test("entering phone number sends OTP", async ({ page }) => {
   await expect.poll(() => otpSendCalled, { timeout: 10_000 }).toBe(true);
 
   // OTP input step should now be visible
-  await expect(
-    page.getByRole("textbox", { name: /otp|code|verification/i })
-  ).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("textbox", { name: /otp|code|verification/i })).toBeVisible({
+    timeout: 10_000,
+  });
 });
 
 // ─── 3. Valid OTP → redirect to dashboard ────────────────────────────────────

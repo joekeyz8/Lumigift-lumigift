@@ -22,7 +22,9 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
     if (!slippage.valid) {
       await updateGiftStatus(giftId, "pending_payment");
       const reason = slippage.reason === "rate_expired" ? "rate_expired" : "rate_slippage";
-      return NextResponse.redirect(new URL(`/gift/${giftId}/payment-failed?reason=${reason}`, req.url));
+      return NextResponse.redirect(
+        new URL(`/gift/${giftId}/payment-failed?reason=${reason}`, req.url)
+      );
     }
 
     await updateGiftStatus(giftId, "locked");

@@ -28,16 +28,8 @@ export interface AuditLogEntry {
  * @returns The created audit log ID
  */
 export async function createAuditLog(entry: AuditLogEntry): Promise<string> {
-  const {
-    eventType,
-    userId,
-    giftId,
-    amountNgn,
-    amountUsdc,
-    ipAddress,
-    userAgent,
-    metadata,
-  } = entry;
+  const { eventType, userId, giftId, amountNgn, amountUsdc, ipAddress, userAgent, metadata } =
+    entry;
 
   const result = await pool.query<{ id: string }>(
     `INSERT INTO audit_logs (

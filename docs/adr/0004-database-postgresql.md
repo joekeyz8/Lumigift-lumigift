@@ -6,6 +6,7 @@
 ## Context
 
 Lumigift needs a persistent store for gift records, user accounts, payment references, and device-tracking data. Requirements:
+
 - ACID transactions (gift creation + payment initiation must be atomic)
 - Relational queries (gifts by sender, gifts by status, paginated cursors)
 - Hosted managed service available on the target deployment platform (Vercel + cloud provider)
@@ -18,6 +19,7 @@ Use **PostgreSQL** as the primary database, accessed via the `pg` Node.js driver
 ## Consequences
 
 ### Positive
+
 - PostgreSQL's ACID guarantees prevent double-spend and partial-write scenarios in the gift lifecycle.
 - Rich query capabilities (window functions, CTEs) support future analytics without an additional data warehouse.
 - Managed PostgreSQL is available on all major cloud providers (Neon, Supabase, AWS RDS, Railway).
@@ -25,18 +27,20 @@ Use **PostgreSQL** as the primary database, accessed via the `pg` Node.js driver
 - Plain SQL migrations are portable and reviewable without framework-specific tooling.
 
 ### Negative
+
 - Raw SQL requires manual query construction; no compile-time query validation (unlike Prisma or sqlc).
 - Schema migrations must be applied manually or via a migration runner; no automatic rollback.
 - Connection pooling must be managed carefully in serverless (Vercel) environments to avoid exhausting connections.
 
 ### Neutral
+
 - Redis is used alongside PostgreSQL for OTP storage and idempotency keys (see `docs/ops/redis.md`).
 
 ## Alternatives Considered
 
-| Option | Reason Rejected |
-|--------|----------------|
-| MongoDB | Document model is a poor fit for relational gift/user/payment data; weaker transaction support |
-| Prisma + PostgreSQL | Prisma adds value but also cold-start overhead in serverless; raw SQL keeps the bundle lean |
+| Option              | Reason Rejected                                                                                          |
+| ------------------- | -------------------------------------------------------------------------------------------------------- |
+| MongoDB             | Document model is a poor fit for relational gift/user/payment data; weaker transaction support           |
+| Prisma + PostgreSQL | Prisma adds value but also cold-start overhead in serverless; raw SQL keeps the bundle lean              |
 | PlanetScale (MySQL) | MySQL lacks some PostgreSQL features we rely on; PlanetScale's branching model is unnecessary complexity |
-| SQLite | Not suitable for multi-instance serverless deployments |
+| SQLite              | Not suitable for multi-instance serverless deployments                                                   |

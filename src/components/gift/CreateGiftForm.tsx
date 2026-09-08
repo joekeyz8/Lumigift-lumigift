@@ -42,7 +42,9 @@ export function CreateGiftForm() {
     setError(null);
     try {
       // Check if recipient is registered (GET — no CSRF needed)
-      const checkRes = await fetch(`/api/v1/users?phone=${encodeURIComponent(data.recipientPhone)}`);
+      const checkRes = await fetch(
+        `/api/v1/users?phone=${encodeURIComponent(data.recipientPhone)}`
+      );
       if (checkRes.ok) {
         const checkJson = await checkRes.json();
         setRecipientRegistered(checkJson.data?.exists ?? false);
@@ -135,7 +137,11 @@ export function CreateGiftForm() {
 
   return (
     <>
-      <form className={styles.form} onSubmit={handleSubmit(onFormSubmit as Parameters<typeof handleSubmit>[0])} noValidate>
+      <form
+        className={styles.form}
+        onSubmit={handleSubmit(onFormSubmit as Parameters<typeof handleSubmit>[0])}
+        noValidate
+      >
         <h2 className={styles.title}>Send a Gift</h2>
 
         <Input
@@ -191,15 +197,16 @@ export function CreateGiftForm() {
         <div className={styles.overlay}>
           <div className={styles.modal}>
             <h3>Unregistered Recipient</h3>
-            <p>The recipient's phone number is not registered with Lumigift. They will receive an SMS invitation to claim the gift, but must register first.</p>
+            <p>
+              The recipient's phone number is not registered with Lumigift. They will receive an SMS
+              invitation to claim the gift, but must register first.
+            </p>
             <p>Are you sure you want to proceed?</p>
             <div className={styles.modalActions}>
               <Button onClick={onCancelUnregistered} variant="secondary">
                 Cancel
               </Button>
-              <Button onClick={onProceedUnregistered}>
-                Proceed
-              </Button>
+              <Button onClick={onProceedUnregistered}>Proceed</Button>
             </div>
           </div>
         </div>

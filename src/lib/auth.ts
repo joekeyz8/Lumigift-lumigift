@@ -75,23 +75,17 @@ export const authOptions: NextAuthOptions = {
   },
   cookies: {
     sessionToken: {
-      name: isProd
-        ? "__Secure-next-auth.session-token"
-        : "next-auth.session-token",
+      name: isProd ? "__Secure-next-auth.session-token" : "next-auth.session-token",
       options: secureCookieOptions,
     },
     callbackUrl: {
-      name: isProd
-        ? "__Secure-next-auth.callback-url"
-        : "next-auth.callback-url",
+      name: isProd ? "__Secure-next-auth.callback-url" : "next-auth.callback-url",
       options: secureCookieOptions,
     },
     csrfToken: {
       // CSRF token must be readable by the login form JS, so HttpOnly is false.
       // It is still Secure + SameSite=Strict in production.
-      name: isProd
-        ? "__Host-next-auth.csrf-token"
-        : "next-auth.csrf-token",
+      name: isProd ? "__Host-next-auth.csrf-token" : "next-auth.csrf-token",
       options: {
         ...secureCookieOptions,
         httpOnly: false,
@@ -132,8 +126,7 @@ export const authOptions: NextAuthOptions = {
           const ua = reqHeaders.get("user-agent") ?? "";
           const lang = reqHeaders.get("accept-language") ?? "";
           const enc = reqHeaders.get("accept-encoding") ?? "";
-          const ip =
-            reqHeaders.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
+          const ip = reqHeaders.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
           const fingerprint = fingerprintFromHeaders(ua, lang, enc);
 
           await handleDeviceCheck(user.id, user.phone, fingerprint, ip);

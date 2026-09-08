@@ -3,8 +3,8 @@
 > **Time-locked cash gifts on the Stellar blockchain.**  
 > Send money that stays completely hidden until a surprise unlock date.
 
-[![CI](https://github.com/JosephOnuh/Lumigift-lumigift/actions/workflows/ci.yml/badge.svg)](https://github.com/JosephOnuh/Lumigift-lumigift/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/JosephOnuh/Lumigift-lumigift/graph/badge.svg?token=CODECOV_TOKEN)](https://codecov.io/gh/JosephOnuh/Lumigift-lumigift)
+[![CI](https://github.com/joekeyz8/Lumigift-lumigift/actions/workflows/ci.yml/badge.svg)](https://github.com/joekeyz8/Lumigift-lumigift/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/joekeyz8/Lumigift-lumigift/graph/badge.svg?token=CODECOV_TOKEN)](https://codecov.io/gh/joekeyz8/Lumigift-lumigift)
 [![License: MIT](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 [![Built on Stellar](https://img.shields.io/badge/Built%20on-Stellar-blue)](https://stellar.org)
 [![Soroban](https://img.shields.io/badge/Smart%20Contracts-Soroban-blueviolet)](https://developers.stellar.org/docs/build/smart-contracts)
@@ -16,8 +16,9 @@
 Lumigift is a full-stack gifting platform that enables users to send cash gifts that remain completely hidden until a predetermined unlock date and time. By using the Stellar blockchain, Lumigift transforms digital money transfers into memorable experiences filled with mystery and anticipation.
 
 **Who is it for?**
+
 - Nigerians sending to Nigerians for birthdays, anniversaries, and holidays where surprise is key
-- Valentine's Day, graduations, and surprise celebrations where the *timing* of the gift is as important as the gift itself
+- Valentine's Day, graduations, and surprise celebrations where the _timing_ of the gift is as important as the gift itself
 
 ---
 
@@ -47,16 +48,16 @@ Lumigift is a full-stack gifting platform that enables users to send cash gifts 
 
 ### Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | Next.js 14 (App Router), TypeScript, Vanilla CSS |
-| Backend | Next.js Route Handlers, server services layer |
-| Blockchain | Stellar, Soroban smart contracts (Rust) |
-| Stablecoin | USDC on Stellar |
-| Payments | Paystack (NGN), Stripe (international) |
-| SMS/OTP | Termii |
-| Database | PostgreSQL |
-| Cache/Queue | Redis |
+| Layer       | Technology                                       |
+| ----------- | ------------------------------------------------ |
+| Frontend    | Next.js 14 (App Router), TypeScript, Vanilla CSS |
+| Backend     | Next.js Route Handlers, server services layer    |
+| Blockchain  | Stellar, Soroban smart contracts (Rust)          |
+| Stablecoin  | USDC on Stellar                                  |
+| Payments    | Paystack (NGN), Stripe (international)           |
+| SMS/OTP     | Termii                                           |
+| Database    | PostgreSQL                                       |
+| Cache/Queue | Redis                                            |
 
 ---
 
@@ -114,7 +115,7 @@ The easiest way to get started is using Docker, which automatically sets up Post
 
 ```bash
 # Clone the repository
-git clone https://github.com/JosephOnuh/Lumigift-lumigift.git
+git clone https://github.com/joekeyz8/Lumigift-lumigift.git
 cd lumigift
 
 # Copy environment file and configure
@@ -128,6 +129,7 @@ docker-compose up
 ```
 
 **What's included:**
+
 - ✅ Next.js app running on port 3000
 - ✅ PostgreSQL database on port 5432 (auto-initialized with migrations)
 - ✅ Redis cache/queue on port 6379
@@ -157,6 +159,7 @@ docker-compose -f docker-compose.dev.yml up
 ```
 
 **Production vs Development:**
+
 - `docker-compose.yml` - Production build with multi-stage optimization
 - `docker-compose.dev.yml` - Development mode with hot reload and volume mounts
 
@@ -165,7 +168,7 @@ docker-compose -f docker-compose.dev.yml up
 If you prefer not to use Docker:
 
 ```bash
-git clone https://github.com/JosephOnuh/Lumigift-lumigift.git
+git clone https://github.com/joekeyz8/Lumigift-lumigift.git
 cd lumigift
 npm install
 

@@ -5,14 +5,14 @@ describe("gift state machine", () => {
   // ─── Valid transitions ───────────────────────────────────────────────────────
   const validPaths: [GiftStatus, GiftStatus][] = [
     ["pending_payment", "funded"],
-    ["funded",          "locked"],
-    ["locked",          "unlocked"],
-    ["unlocked",        "claimed"],
+    ["funded", "locked"],
+    ["locked", "unlocked"],
+    ["unlocked", "claimed"],
     // any → cancelled
     ["pending_payment", "cancelled"],
-    ["funded",          "cancelled"],
-    ["locked",          "cancelled"],
-    ["unlocked",        "cancelled"],
+    ["funded", "cancelled"],
+    ["locked", "cancelled"],
+    ["unlocked", "cancelled"],
   ];
 
   test.each(validPaths)("%s → %s is valid", (from, to) => {
@@ -21,12 +21,12 @@ describe("gift state machine", () => {
 
   // ─── Invalid transitions ─────────────────────────────────────────────────────
   const invalidPaths: [GiftStatus, GiftStatus][] = [
-    ["pending_payment", "locked"],    // skip funded
-    ["pending_payment", "claimed"],   // skip multiple steps
-    ["locked",          "claimed"],   // skip unlocked
-    ["claimed",         "unlocked"],  // backwards
-    ["cancelled",       "locked"],    // from terminal state
-    ["claimed",         "cancelled"], // from terminal state
+    ["pending_payment", "locked"], // skip funded
+    ["pending_payment", "claimed"], // skip multiple steps
+    ["locked", "claimed"], // skip unlocked
+    ["claimed", "unlocked"], // backwards
+    ["cancelled", "locked"], // from terminal state
+    ["claimed", "cancelled"], // from terminal state
   ];
 
   test.each(invalidPaths)("%s → %s is invalid", (from, to) => {

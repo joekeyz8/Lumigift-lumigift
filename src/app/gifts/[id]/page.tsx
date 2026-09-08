@@ -8,8 +8,7 @@ interface Props {
 }
 
 async function fetchGift(id: string): Promise<Gift | null> {
-  const baseUrl =
-    process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   const res = await fetch(`${baseUrl}/api/v1/gifts/${id}`, {
     cache: "no-store",
   });
@@ -24,11 +23,7 @@ export default async function GiftClaimPage({ params, searchParams }: Props) {
 
   return (
     <main style={{ maxWidth: 480, margin: "4rem auto", padding: "0 1rem" }}>
-      <GiftCard
-        gift={gift}
-        perspective="recipient"
-        recipientStellarKey={searchParams.stellarKey}
-      />
+      <GiftCard gift={gift} perspective="recipient" recipientStellarKey={searchParams.stellarKey} />
     </main>
   );
 }

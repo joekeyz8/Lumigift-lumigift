@@ -42,9 +42,7 @@ export function generateCsrfToken(): string {
   const timestamp = Date.now().toString();
   const secret = getSecret();
 
-  const hmac = createHmac("sha256", secret)
-    .update(`${nonce}.${timestamp}`)
-    .digest("hex");
+  const hmac = createHmac("sha256", secret).update(`${nonce}.${timestamp}`).digest("hex");
 
   return `${nonce}.${timestamp}.${hmac}`;
 }
@@ -66,9 +64,7 @@ export function verifyCsrfToken(token: string): boolean {
 
     // Recompute HMAC
     const secret = getSecret();
-    const expectedHmac = createHmac("sha256", secret)
-      .update(`${nonce}.${timestamp}`)
-      .digest("hex");
+    const expectedHmac = createHmac("sha256", secret).update(`${nonce}.${timestamp}`).digest("hex");
 
     // Timing-safe comparison
     const a = Buffer.from(providedHmac.padEnd(expectedHmac.length, "\0"));

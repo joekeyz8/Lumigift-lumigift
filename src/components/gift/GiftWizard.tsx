@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { createGiftSchema, type CreateGiftInput } from "@/types/schemas";
+import { createGiftSchema, type CreateGiftInput, type CreateGiftFormInput } from "@/types/schemas";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { TemplateSelector } from "./TemplateSelector";
@@ -32,9 +32,9 @@ export function GiftWizard() {
     getValues,
     setValue,
     formState: { errors },
-  } = useForm<CreateGiftInput>({
+  } = useForm<CreateGiftFormInput>({
     resolver: zodResolver(createGiftSchema),
-    defaultValues: { paymentProvider: "paystack" },
+    defaultValues: { paymentProvider: "paystack", recipientIsRegistered: false },
     mode: "onTouched",
   });
 
@@ -46,7 +46,7 @@ export function GiftWizard() {
     setStep(STEP_RECIPIENT);
   }
 
-  async function next(fields: (keyof CreateGiftInput)[]) {
+  async function next(fields: (keyof CreateGiftFormInput)[]) {
     const valid = await trigger(fields);
     if (valid) setStep((s) => s + 1);
   }
@@ -55,7 +55,7 @@ export function GiftWizard() {
     setStep((s) => Math.max(0, s - 1));
   }
 
-  const onSubmit = async (data: CreateGiftInput) => {
+  const onSubmit = async (data: CreateGiftFormInput) => {
     setLoading(true);
     setError(null);
     try {
@@ -78,9 +78,7 @@ export function GiftWizard() {
     <div className={styles.wrapper}>
       {step > STEP_OCCASION && <WizardProgress currentStep={step} />}
 
-      {step === STEP_OCCASION && (
-        <TemplateSelector onSelect={handleTemplateSelect} />
-      )}
+      {step === STEP_OCCASION && <TemplateSelector onSelect={handleTemplateSelect} />}
 
       {step === STEP_RECIPIENT && (
         <div className={styles.stepContent}>
@@ -106,7 +104,9 @@ export function GiftWizard() {
             {...register("recipientEmail")}
           />
           <div className={styles.nav}>
-            <Button variant="secondary" onClick={back}>Back</Button>
+            <Button variant="secondary" onClick={back}>
+              Back
+            </Button>
             <Button onClick={() => next(["recipientName", "recipientPhone"])}>Next</Button>
           </div>
         </div>
@@ -134,12 +134,12 @@ export function GiftWizard() {
               placeholder="Write something heartfelt…"
               {...register("message")}
             />
-            {errors.message && (
-              <span className="input-error-msg">{errors.message.message}</span>
-            )}
+            {errors.message && <span className="input-error-msg">{errors.message.message}</span>}
           </div>
           <div className={styles.nav}>
-            <Button variant="secondary" onClick={back}>Back</Button>
+            <Button variant="secondary" onClick={back}>
+              Back
+            </Button>
             <Button onClick={() => next(["amountNgn"])}>Next</Button>
           </div>
         </div>
@@ -155,7 +155,9 @@ export function GiftWizard() {
             {...register("unlockAt")}
           />
           <div className={styles.nav}>
-            <Button variant="secondary" onClick={back}>Back</Button>
+            <Button variant="secondary" onClick={back}>
+              Back
+            </Button>
             <Button onClick={() => next(["unlockAt"])}>Review Gift</Button>
           </div>
         </div>
@@ -171,8 +173,12 @@ export function GiftWizard() {
           />
           {error && <p className={styles.error}>{error}</p>}
           <div className={styles.nav}>
-            <Button type="button" variant="secondary" onClick={back}>Back</Button>
-            <Button type="submit" loading={loading}>Continue to Payment</Button>
+            <Button type="button" variant="secondary" onClick={back}>
+              Back
+            </Button>
+            <Button type="submit" loading={loading}>
+              Continue to Payment
+            </Button>
           </div>
         </form>
       )}

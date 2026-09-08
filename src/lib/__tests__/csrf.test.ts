@@ -10,12 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import {
-  generateCsrfToken,
-  verifyCsrfToken,
-  setCsrfCookie,
-  withCsrf,
-} from "@/lib/csrf";
+import { generateCsrfToken, verifyCsrfToken, setCsrfCookie, withCsrf } from "@/lib/csrf";
 
 // ── Environment setup ─────────────────────────────────────────────────────────
 

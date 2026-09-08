@@ -14,7 +14,7 @@ This guide explains how to run Lumigift using Docker and Docker Compose.
 ### 1. Clone and Configure
 
 ```bash
-git clone https://github.com/JosephOnuh/Lumigift-lumigift.git
+git clone https://github.com/joekeyz8/Lumigift-lumigift.git
 cd lumigift
 
 # Copy environment template
@@ -75,6 +75,7 @@ Multi-stage build optimized for production:
 3. **runner** - Minimal runtime image with non-root user
 
 **Features:**
+
 - Multi-stage build reduces final image size
 - Non-root user for security
 - Health checks included
@@ -221,6 +222,7 @@ NEXTAUTH_SECRET=$(openssl rand -base64 32)
 ### Optional Overrides
 
 By default, `docker-compose.yml` configures:
+
 - `DATABASE_URL=postgresql://lumigift:lumigift_dev_password@postgres:5432/lumigift`
 - `REDIS_URL=redis://redis:6379`
 
@@ -315,10 +317,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
+          cpus: "2"
           memory: 2G
         reservations:
-          cpus: '1'
+          cpus: "1"
           memory: 1G
       replicas: 3
       restart_policy:
@@ -348,12 +350,14 @@ services:
 ## Security Best Practices
 
 ✅ **Implemented:**
+
 - Non-root user in production image
 - Minimal base image (Alpine Linux)
 - Health checks for all services
 - No secrets in Dockerfile or docker-compose.yml
 
 ⚠️ **Additional Recommendations:**
+
 - Scan images for vulnerabilities: `docker scan lumigift-app`
 - Use Docker secrets in production
 - Enable Docker Content Trust

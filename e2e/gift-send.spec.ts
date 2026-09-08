@@ -104,7 +104,10 @@ test.describe("Gift Send Flow", () => {
     await page.fill('input[name="recipientName"]', "Test Recipient");
     await page.fill('input[name="recipientPhone"]', TEST_PHONE);
     await page.fill('input[name="amountNgn"]', "1000");
-    await page.fill('input[name="unlockAt"]', new Date(Date.now() + 86400000).toISOString().slice(0, 16)); // tomorrow
+    await page.fill(
+      'input[name="unlockAt"]',
+      new Date(Date.now() + 86400000).toISOString().slice(0, 16)
+    ); // tomorrow
     await page.fill('textarea[name="message"]', "Happy testing!");
     await page.screenshot({ path: "test-results/form-filled.png" });
 
@@ -157,7 +160,10 @@ test.describe("Gift Send Flow", () => {
     await page.fill('input[name="recipientName"]', "Test Recipient");
     await page.fill('input[name="recipientPhone"]', TEST_PHONE);
     await page.fill('input[name="amountNgn"]', "1000");
-    await page.fill('input[name="unlockAt"]', new Date(Date.now() + 86400000).toISOString().slice(0, 16));
+    await page.fill(
+      'input[name="unlockAt"]',
+      new Date(Date.now() + 86400000).toISOString().slice(0, 16)
+    );
     await page.click('button[type="submit"]');
     await page.waitForURL(/api\/payments\/callback/);
 

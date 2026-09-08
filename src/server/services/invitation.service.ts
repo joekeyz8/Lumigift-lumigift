@@ -34,9 +34,7 @@ export async function createGiftInvitation(
  * @param token - The invitation token.
  * @returns The invitation details if valid, or null if invalid/expired.
  */
-export async function validateInvitationToken(
-  token: string
-): Promise<{
+export async function validateInvitationToken(token: string): Promise<{
   id: string;
   giftId: string;
   recipientPhoneHash: string;

@@ -17,11 +17,11 @@ The server signing key is a long-lived secret. If it is compromised, an attacker
 
 In production the key **must** be stored in a secrets manager, not only in environment variables:
 
-| Environment | Storage |
-|-------------|---------|
-| Local dev | `.env.local` (never committed) |
-| Staging | Vercel environment variables (encrypted at rest) |
-| Production | AWS Secrets Manager or HashiCorp Vault; injected as env var at runtime |
+| Environment | Storage                                                                |
+| ----------- | ---------------------------------------------------------------------- |
+| Local dev   | `.env.local` (never committed)                                         |
+| Staging     | Vercel environment variables (encrypted at rest)                       |
+| Production  | AWS Secrets Manager or HashiCorp Vault; injected as env var at runtime |
 
 Never store the raw secret key in source code, CI logs, or unencrypted config files.
 
@@ -109,6 +109,7 @@ After successful rotation, record the event in the audit log (see below). This i
 ### Step 8 — Revoke the Old Key
 
 Securely delete the old secret key from all locations:
+
 - Remove from secrets manager (or mark as deprecated/inactive).
 - Clear from any local `.env` files.
 - Rotate any backups that contained the old key.
@@ -116,6 +117,7 @@ Securely delete the old secret key from all locations:
 ## Zero-Downtime Guarantee
 
 The procedure above ensures zero downtime because:
+
 1. The new key is added as a co-signer **before** the old key is removed.
 2. The application is redeployed with the new key while both keys are valid.
 3. The old key is only removed after the new deployment is confirmed healthy.

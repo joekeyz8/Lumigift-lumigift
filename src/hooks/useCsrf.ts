@@ -63,7 +63,10 @@ export function useCsrf() {
 
       // If the server rejects the token, invalidate and surface the error
       if (res.status === 403) {
-        const body = await res.clone().json().catch(() => ({}));
+        const body = await res
+          .clone()
+          .json()
+          .catch(() => ({}));
         if (body?.code === "CSRF_INVALID" || body?.code === "CSRF_MISSING") {
           invalidateCsrfToken();
           tokenRef.current = null;

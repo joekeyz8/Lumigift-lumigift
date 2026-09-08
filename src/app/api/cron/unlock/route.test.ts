@@ -39,9 +39,7 @@ describe("GET /api/cron/unlock", () => {
   });
 
   it("returns 200 and runs processUnlocks with a valid token", async () => {
-    const { processUnlocks } = await import(
-      "@/server/services/scheduler.service"
-    );
+    const { processUnlocks } = await import("@/server/services/scheduler.service");
     const res = await GET(makeRequest("Bearer test-secret"));
     expect(res.status).toBe(200);
     const body = await res.json();

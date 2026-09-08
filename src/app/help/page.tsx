@@ -6,7 +6,8 @@ import styles from "./page.module.css";
 
 export const metadata: Metadata = {
   title: "Help & FAQ | Lumigift",
-  description: "Find answers to common questions about sending and receiving time-locked cash gifts on Lumigift.",
+  description:
+    "Find answers to common questions about sending and receiving time-locked cash gifts on Lumigift.",
   keywords: ["help", "faq", "support", "lumigift", "gifts", "stellar", "usdc"],
   openGraph: {
     title: "Help & FAQ | Lumigift",
@@ -37,10 +38,7 @@ export default function HelpPage() {
         {/* FAQ Content */}
         <main className={styles.content}>
           {faqContent.sections.map((section) => (
-            <FAQSection
-              key={section.id}
-              {...section}
-            />
+            <FAQSection key={section.id} {...section} />
           ))}
         </main>
 

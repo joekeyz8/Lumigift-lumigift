@@ -11,7 +11,7 @@ Get Lumigift running in 3 minutes!
 ### 1️⃣ Clone & Configure
 
 ```bash
-git clone https://github.com/JosephOnuh/Lumigift-lumigift.git
+git clone https://github.com/joekeyz8/Lumigift-lumigift.git
 cd lumigift
 cp .env.local.example .env.local
 ```
@@ -19,21 +19,25 @@ cp .env.local.example .env.local
 ### 2️⃣ Generate Secrets
 
 **Linux/Mac:**
+
 ```bash
 ./scripts/generate-secrets.sh
 ```
 
 **Windows PowerShell:**
+
 ```powershell
 .\scripts\generate-secrets.ps1
 ```
 
 **Or manually:**
+
 ```bash
 openssl rand -base64 32
 ```
 
 Copy the generated secrets to `.env.local`:
+
 ```env
 NEXTAUTH_SECRET=<paste_generated_secret>
 CRON_SECRET=<paste_generated_secret>
@@ -42,11 +46,13 @@ CRON_SECRET=<paste_generated_secret>
 ### 3️⃣ Start Services
 
 **Production mode:**
+
 ```bash
 docker-compose up
 ```
 
 **Development mode (with hot reload):**
+
 ```bash
 docker-compose -f docker-compose.dev.yml up
 ```
@@ -101,9 +107,10 @@ npm run docker:logs        # View logs
 ### Port Already in Use
 
 Change ports in `docker-compose.yml`:
+
 ```yaml
 ports:
-  - "3001:3000"  # Use 3001 instead of 3000
+  - "3001:3000" # Use 3001 instead of 3000
 ```
 
 ### Services Won't Start
@@ -167,7 +174,7 @@ docker-compose restart postgres
 
 - **Full Documentation:** [docs/docker-setup.md](docs/docker-setup.md)
 - **Project README:** [README.md](README.md)
-- **Issues:** [GitHub Issues](https://github.com/JosephOnuh/Lumigift-lumigift/issues)
+- **Issues:** [GitHub Issues](https://github.com/joekeyz8/Lumigift-lumigift/issues)
 
 ---
 

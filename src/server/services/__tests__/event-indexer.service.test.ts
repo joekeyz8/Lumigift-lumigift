@@ -77,9 +77,7 @@ describe("indexEscrowEvents", () => {
 
     await indexEscrowEvents();
 
-    expect(mockFetch).toHaveBeenCalledWith(
-      expect.objectContaining({ startCursor: storedCursor })
-    );
+    expect(mockFetch).toHaveBeenCalledWith(expect.objectContaining({ startCursor: storedCursor }));
   });
 
   it("applies initialized event → sets gift status to locked", async () => {

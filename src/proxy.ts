@@ -5,16 +5,16 @@ const UNVERSIONED_API = /^\/api\/(?!v\d+\/)(.+)$/;
 
 function buildCsp(nonce: string): string {
   const directives: Record<string, string> = {
-    "default-src":     "'self'",
-    "script-src":      `'self' 'nonce-${nonce}' 'strict-dynamic'`,
-    "style-src":       `'self' 'nonce-${nonce}'`,
-    "img-src":         "'self' data: https://res.cloudinary.com",
-    "font-src":        "'self'",
-    "connect-src":     "'self' https://horizon-testnet.stellar.org https://horizon.stellar.org",
+    "default-src": "'self'",
+    "script-src": `'self' 'nonce-${nonce}' 'strict-dynamic'`,
+    "style-src": `'self' 'nonce-${nonce}'`,
+    "img-src": "'self' data: https://res.cloudinary.com",
+    "font-src": "'self'",
+    "connect-src": "'self' https://horizon-testnet.stellar.org https://horizon.stellar.org",
     "frame-ancestors": "'none'",
-    "base-uri":        "'self'",
-    "form-action":     "'self'",
-    "object-src":      "'none'",
+    "base-uri": "'self'",
+    "form-action": "'self'",
+    "object-src": "'none'",
     "upgrade-insecure-requests": "",
   };
 
@@ -37,7 +37,7 @@ export function proxy(req: NextRequest) {
 
   // ── CSP nonce ───────────────────────────────────────────────────────────────
   const nonce = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString("base64");
-  const csp   = buildCsp(nonce);
+  const csp = buildCsp(nonce);
 
   // ── Correlation ID ──────────────────────────────────────────────────────────
   const correlationId = req.headers.get("x-correlation-id") ?? crypto.randomUUID();

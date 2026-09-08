@@ -22,10 +22,10 @@ Lumigift processes payments via Paystack (NGN) and Stripe (international cards).
 
 To comply with Nigerian AML (Anti-Money Laundering) regulations:
 
-| Limit | Amount |
-|-------|--------|
-| Minimum gift amount | ₦500 per transaction |
-| Maximum gift amount | ₦500,000 per transaction |
+| Limit               | Amount                      |
+| ------------------- | --------------------------- |
+| Minimum gift amount | ₦500 per transaction        |
+| Maximum gift amount | ₦500,000 per transaction    |
 | Daily sending limit | ₦1,000,000 per user per day |
 
 These limits are enforced at both the frontend and backend. Transactions that exceed these limits will be rejected. Limits are configurable by Lumigift administrators and may change with regulatory requirements.

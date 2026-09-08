@@ -4,11 +4,11 @@ This document describes the uptime monitoring setup for Lumigift's critical endp
 
 ## Monitored Endpoints
 
-| Endpoint | Check Interval | Alert Threshold |
-|----------|---------------|-----------------|
-| `GET /api/health` | 1 minute | 2 consecutive failures |
-| Stellar Horizon API (`STELLAR_HORIZON_URL`) | 1 minute | 2 consecutive failures |
-| Soroban RPC (`STELLAR_RPC_URL`) | 5 minutes | 2 consecutive failures |
+| Endpoint                                    | Check Interval | Alert Threshold        |
+| ------------------------------------------- | -------------- | ---------------------- |
+| `GET /api/health`                           | 1 minute       | 2 consecutive failures |
+| Stellar Horizon API (`STELLAR_HORIZON_URL`) | 1 minute       | 2 consecutive failures |
+| Soroban RPC (`STELLAR_RPC_URL`)             | 5 minutes      | 2 consecutive failures |
 
 ## Setup: BetterUptime (Recommended)
 
@@ -19,6 +19,7 @@ This document describes the uptime monitoring setup for Lumigift's critical endp
 Log in to BetterUptime and create the following monitors:
 
 **Monitor 1 — App Health**
+
 - URL: `https://<your-domain>/api/health`
 - Method: `GET`
 - Check frequency: **1 minute**
@@ -27,6 +28,7 @@ Log in to BetterUptime and create the following monitors:
 - Alert after: **2 consecutive failures**
 
 **Monitor 2 — Stellar Horizon**
+
 - URL: `https://horizon.stellar.org/` (mainnet) or `https://horizon-testnet.stellar.org/` (testnet)
 - Method: `GET`
 - Check frequency: **1 minute**
@@ -34,6 +36,7 @@ Log in to BetterUptime and create the following monitors:
 - Alert after: **2 consecutive failures**
 
 **Monitor 3 — Soroban RPC**
+
 - URL: `https://soroban-rpc.stellar.org` (mainnet) or `https://soroban-testnet.stellar.org` (testnet)
 - Method: `POST`
 - Request body: `{"jsonrpc":"2.0","id":1,"method":"getHealth"}`
@@ -52,6 +55,7 @@ Log in to BetterUptime and create the following monitors:
    - Level 2: Engineering lead (after 15 min no acknowledgement)
 
 Alternatively, use **Slack** alerts:
+
 - BetterUptime → **Integrations** → **Slack** → select `#incidents` channel.
 
 ### 3. Status Page

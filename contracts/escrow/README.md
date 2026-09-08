@@ -12,21 +12,21 @@ All state is kept in **instance storage** (tied to the contract instance lifetim
 auto-extended on every invocation). Every key is written once during `initialize` and
 is immutable except `Claimed`, which transitions `false → true` on a successful claim.
 
-| `DataKey`    | Rust type | Description |
-|--------------|-----------|-------------|
-| `Sender`     | `Address` | Gift creator; authorized the initial token transfer |
-| `Recipient`  | `Address` | Address authorized to call `claim` and receive funds |
-| `Token`      | `Address` | USDC contract address (see network addresses below) |
-| `Amount`     | `i128`    | Locked amount in stroops (≥ 10 000 000 = 1 USDC) |
-| `UnlockTime` | `u64`     | Unix timestamp (seconds) after which `claim` is open |
+| `DataKey`    | Rust type | Description                                                            |
+| ------------ | --------- | ---------------------------------------------------------------------- |
+| `Sender`     | `Address` | Gift creator; authorized the initial token transfer                    |
+| `Recipient`  | `Address` | Address authorized to call `claim` and receive funds                   |
+| `Token`      | `Address` | USDC contract address (see network addresses below)                    |
+| `Amount`     | `i128`    | Locked amount in stroops (≥ 10 000 000 = 1 USDC)                       |
+| `UnlockTime` | `u64`     | Unix timestamp (seconds) after which `claim` is open                   |
 | `Claimed`    | `bool`    | `false` until claim succeeds; set to `true` atomically before transfer |
 
 ### USDC Contract Addresses
 
-| Network  | Address |
-|----------|---------|
-| Mainnet  | `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75` |
-| Testnet  | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
+| Network | Address                                                    |
+| ------- | ---------------------------------------------------------- |
+| Mainnet | `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75` |
+| Testnet | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
 
 ---
 
@@ -49,28 +49,28 @@ is immutable except `Claimed`, which transitions `false → true` on a successfu
 
 State transitions:
 
-| From          | Event / Condition                          | To          |
-|---------------|--------------------------------------------|-------------|
-| Uninitialized | `initialize()` called with valid args      | Locked      |
-| Locked        | `ledger.timestamp >= unlock_time`          | Unlocked    |
-| Unlocked      | `claim()` called by recipient              | Claimed     |
-| Any           | `initialize()` called again               | ❌ `AlreadyInitialized` |
-| Claimed       | `claim()` called again                    | ❌ `AlreadyClaimed` |
-| Locked        | `claim()` called before unlock            | ❌ `StillLocked` |
+| From          | Event / Condition                     | To                      |
+| ------------- | ------------------------------------- | ----------------------- |
+| Uninitialized | `initialize()` called with valid args | Locked                  |
+| Locked        | `ledger.timestamp >= unlock_time`     | Unlocked                |
+| Unlocked      | `claim()` called by recipient         | Claimed                 |
+| Any           | `initialize()` called again           | ❌ `AlreadyInitialized` |
+| Claimed       | `claim()` called again                | ❌ `AlreadyClaimed`     |
+| Locked        | `claim()` called before unlock        | ❌ `StillLocked`        |
 
 ---
 
 ## Error Codes
 
-| Variant              | Code | When raised |
-|----------------------|------|-------------|
-| `AlreadyInitialized` | 1    | `initialize` called on an already-initialized contract |
-| `AlreadyClaimed`     | 2    | `claim` called after funds were already claimed |
-| `StillLocked`        | 3    | `claim` called before `unlock_time` has passed |
-| `NotInitialized`     | 4    | Any function requiring state called before `initialize` |
-| `Unauthorized`       | 5    | Reserved for future access-control checks |
-| `AlreadyCancelled`   | 6    | Reserved for future cancellation logic |
-| `InvalidAmount`      | 7    | `amount` is below `MIN_AMOUNT` (10 000 000 stroops) |
+| Variant              | Code | When raised                                                               |
+| -------------------- | ---- | ------------------------------------------------------------------------- |
+| `AlreadyInitialized` | 1    | `initialize` called on an already-initialized contract                    |
+| `AlreadyClaimed`     | 2    | `claim` called after funds were already claimed                           |
+| `StillLocked`        | 3    | `claim` called before `unlock_time` has passed                            |
+| `NotInitialized`     | 4    | Any function requiring state called before `initialize`                   |
+| `Unauthorized`       | 5    | Reserved for future access-control checks                                 |
+| `AlreadyCancelled`   | 6    | Reserved for future cancellation logic                                    |
+| `InvalidAmount`      | 7    | `amount` is below `MIN_AMOUNT` (10 000 000 stroops)                       |
 | `InvalidUnlockTime`  | 8    | `unlock_time` is not at least `MIN_LOCK_DURATION` (3 600 s) in the future |
 
 ---
@@ -83,6 +83,7 @@ Stores escrow parameters and transfers `amount` stroops of `token` from `sender`
 into the contract address.
 
 **Preconditions:**
+
 - Contract must not already be initialized (`AlreadyInitialized`)
 - `amount >= MIN_AMOUNT` (10 000 000 stroops = 1 USDC) (`InvalidAmount`)
 - `unlock_time > ledger.timestamp() + MIN_LOCK_DURATION` (`InvalidUnlockTime`)
@@ -99,12 +100,13 @@ Automatically extends the instance TTL to cover `unlock_time` plus a 30-day buff
 Transfers the locked funds to `recipient`.
 
 **Preconditions:**
+
 - Contract must be initialized (`NotInitialized`)
 - Caller must be `recipient` (enforced via `require_auth`)
 - `ledger.timestamp() >= unlock_time` (`StillLocked`)
 - Funds must not already be claimed (`AlreadyClaimed`)
 
-**Atomicity:** `Claimed` is set to `true` *before* the token transfer to prevent
+**Atomicity:** `Claimed` is set to `true` _before_ the token transfer to prevent
 re-entrancy and double-claim attacks.
 
 **Emits event:** `("claimed",)` → `(recipient, amount)`

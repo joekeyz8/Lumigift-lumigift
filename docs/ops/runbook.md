@@ -15,12 +15,14 @@ This runbook provides procedures for handling common production incidents in Lum
 ## Database Connection Failure
 
 ### Symptoms
+
 - API endpoints return 500 errors with "database connection failed"
 - Application logs show `ConnectionError` or `ECONNREFUSED`
 - Dashboard shows stale data
 - User login/registration fails
 
 ### Diagnosis Steps
+
 1. Check Vercel function logs for connection errors
 2. Verify PostgreSQL instance status in cloud provider dashboard
 3. Check connection pool exhaustion: `SELECT count(*) FROM pg_stat_activity WHERE state = 'idle in transaction';`
@@ -28,6 +30,7 @@ This runbook provides procedures for handling common production incidents in Lum
 5. Check for long-running queries: `SELECT pid, now() - query_start, query FROM pg_stat_activity WHERE state != 'idle' ORDER BY query_start;`
 
 ### Resolution Steps
+
 1. **Connection Pool Exhaustion**:
    - Restart affected Vercel functions
    - Increase pool size if pattern persists (update `DATABASE_URL` with `?pool_size=20`)
@@ -43,18 +46,21 @@ This runbook provides procedures for handling common production incidents in Lum
    - Test from different regions
 
 ### Escalation Path
+
 - If database unrecoverable: Escalate to engineering lead for data restoration
 - If widespread outage: Escalate to CTO for customer communication
 
 ## Redis Outage
 
 ### Symptoms
+
 - Paystack webhook processing fails
 - Cron jobs don't execute
 - Application logs show Redis connection errors
 - User payments stuck in "processing" state
 
 ### Diagnosis Steps
+
 1. Check Redis instance status in cloud provider
 2. Test connectivity: `redis-cli -h $REDIS_HOST -p $REDIS_PORT ping`
 3. Check Redis memory usage: `redis-cli info memory`
@@ -62,6 +68,7 @@ This runbook provides procedures for handling common production incidents in Lum
 5. Check for long-running Lua scripts: `redis-cli script kill` (if applicable)
 
 ### Resolution Steps
+
 1. **Redis Instance Down**:
    - Restart Redis instance
    - If AOF corrupted, follow recovery procedure in `docs/ops/redis.md`
@@ -77,18 +84,21 @@ This runbook provides procedures for handling common production incidents in Lum
    - Verify TLS configuration if enabled
 
 ### Escalation Path
+
 - If data loss: Escalate to engineering lead for job reconstruction
 - If Redis cluster issues: Contact cloud provider support
 
 ## Stellar Network Degradation
 
 ### Symptoms
+
 - Gift claims fail with "network error"
 - Contract deployments timeout
 - Application logs show Stellar RPC errors
 - Users report "transaction failed" messages
 
 ### Diagnosis Steps
+
 1. Check Stellar network status: https://status.stellar.org/
 2. Test RPC connectivity: `curl -X POST https://soroban-rpc.stellar.org -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}'`
 3. Check Horizon API: `curl https://horizon.stellar.org/`
@@ -96,6 +106,7 @@ This runbook provides procedures for handling common production incidents in Lum
 5. Check application logs for `NetworkError` or `TimeoutError`
 
 ### Resolution Steps
+
 1. **Temporary Network Issues**:
    - Implement exponential backoff retry logic
    - Switch to backup RPC endpoints if available
@@ -110,18 +121,21 @@ This runbook provides procedures for handling common production incidents in Lum
    - Implement caching for frequently accessed data
 
 ### Escalation Path
+
 - If network-wide outage: Monitor Stellar status page, no immediate action
 - If application-specific: Escalate to engineering team for code fixes
 
 ## Paystack Webhook Failures
 
 ### Symptoms
+
 - Payments don't update gift status
 - Users report successful payment but gift still "pending"
 - Paystack dashboard shows webhook delivery failures
 - Application logs show webhook signature validation errors
 
 ### Diagnosis Steps
+
 1. Check Vercel function logs for webhook endpoint errors
 2. Verify webhook URL in Paystack dashboard matches production URL
 3. Test webhook signature validation manually
@@ -129,6 +143,7 @@ This runbook provides procedures for handling common production incidents in Lum
 5. Verify Paystack API key validity
 
 ### Resolution Steps
+
 1. **Webhook URL Mismatch**:
    - Update webhook URL in Paystack dashboard
    - Resend failed webhooks via Paystack dashboard
@@ -142,18 +157,21 @@ This runbook provides procedures for handling common production incidents in Lum
    - Manually update affected gift statuses from Paystack dashboard data
 
 ### Escalation Path
+
 - If Paystack API issues: Contact Paystack support
 - If widespread payment failures: Escalate to CTO for payment provider communication
 
 ## Cron Job Failure
 
 ### Symptoms
+
 - Gifts don't unlock on schedule
 - Expiry processing doesn't run
 - Application logs missing cron execution entries
 - Vercel cron dashboard shows failures
 
 ### Diagnosis Steps
+
 1. Check Vercel cron job status and logs
 2. Verify cron schedule configuration
 3. Test cron endpoints manually: `curl https://lumigift.com/api/cron/unlock`
@@ -161,6 +179,7 @@ This runbook provides procedures for handling common production incidents in Lum
 5. Verify database connectivity from cron functions
 
 ### Resolution Steps
+
 1. **Cron Function Errors**:
    - Fix code issues and redeploy
    - Manually trigger missed unlocks via admin interface
@@ -174,18 +193,21 @@ This runbook provides procedures for handling common production incidents in Lum
    - Split large jobs into batches
 
 ### Escalation Path
+
 - If manual intervention needed: Escalate to engineering lead
 - If cron system down: Contact Vercel support
 
 ## Application Performance Degradation
 
 ### Symptoms
+
 - API response times >5 seconds
 - High error rates (>5%)
 - Database CPU/memory usage spikes
 - User reports of slow loading
 
 ### Diagnosis Steps
+
 1. Check Vercel function metrics and logs
 2. Monitor database performance: slow query logs
 3. Check Redis memory and connection counts
@@ -193,6 +215,7 @@ This runbook provides procedures for handling common production incidents in Lum
 5. Test external API dependencies (Paystack, Stellar)
 
 ### Resolution Steps
+
 1. **Database Performance**:
    - Add missing indexes on frequently queried columns
    - Optimize slow queries
@@ -208,18 +231,21 @@ This runbook provides procedures for handling common production incidents in Lum
    - Add timeouts and retry logic
 
 ### Escalation Path
+
 - If performance doesn't improve: Escalate to engineering team for deep analysis
 - If affecting revenue: Escalate to CTO
 
 ## Security Incident
 
 ### Symptoms
+
 - Unusual login attempts or API usage
 - Unexpected data modifications
 - Security monitoring alerts
 - User reports of unauthorized access
 
 ### Diagnosis Steps
+
 1. Review application security logs
 2. Check for suspicious IP addresses or user agents
 3. Verify API key usage and permissions
@@ -227,6 +253,7 @@ This runbook provides procedures for handling common production incidents in Lum
 5. Check for malware or unauthorized code deployments
 
 ### Resolution Steps
+
 1. **Immediate Response**:
    - Rotate compromised credentials
    - Block suspicious IPs
@@ -242,6 +269,7 @@ This runbook provides procedures for handling common production incidents in Lum
    - Update security policies
 
 ### Escalation Path
+
 - Always escalate to CTO and security team
 - Involve legal if data breach suspected
 - Notify affected users if necessary
@@ -249,6 +277,7 @@ This runbook provides procedures for handling common production incidents in Lum
 ## Communication Templates
 
 ### Internal Incident Update
+
 ```
 🚨 Incident Update: [Brief Title]
 
@@ -263,6 +292,7 @@ Next update: [Time]
 ```
 
 ### Customer Communication
+
 ```
 Subject: Lumigift Service Update
 
@@ -280,16 +310,18 @@ Lumigift Team
 
 ---
 
-*This runbook is reviewed quarterly and updated as systems evolve. Last reviewed: [Date]*
+_This runbook is reviewed quarterly and updated as systems evolve. Last reviewed: [Date]_
 
 ## Log Aggregation
 
 ### Overview
+
 All application logs are emitted as structured JSON (pino) to stdout. In production
 the log stream is shipped to **Logtail / Betterstack** via the `LOG_AGGREGATION_URL`
 and `LOG_AGGREGATION_TOKEN` environment variables.
 
 ### Setup
+
 1. Create a **HTTP source** in Betterstack (or your chosen provider).
 2. Copy the ingest URL and token into your deployment environment:
    ```
@@ -299,19 +331,22 @@ and `LOG_AGGREGATION_TOKEN` environment variables.
 3. Set `LOG_LEVEL=info` in production (use `debug` locally).
 
 ### Retention Policy
+
 Configure **30-day retention** in the Betterstack source settings
 (Sources → your source → Retention).
 
 ### Alerts
+
 Configure the following alert rules in Betterstack (or equivalent):
 
-| Alert | Condition | Channel |
-|-------|-----------|---------|
-| High error rate | `level = "error"` count > 10 in 5 min | Slack #incidents |
-| Auth failures | `service = "auth"` + `level = "error"` > 5 in 1 min | Slack #incidents |
+| Alert            | Condition                                               | Channel          |
+| ---------------- | ------------------------------------------------------- | ---------------- |
+| High error rate  | `level = "error"` count > 10 in 5 min                   | Slack #incidents |
+| Auth failures    | `service = "auth"` + `level = "error"` > 5 in 1 min     | Slack #incidents |
 | Payment failures | `service = "paystack"` + `level = "error"` > 3 in 5 min | Slack #incidents |
 
 ### Key Metrics Dashboard
+
 Create a dashboard with these queries:
 
 - **Request rate**: count of `level = "info"` logs per minute
@@ -320,5 +355,6 @@ Create a dashboard with these queries:
 - **P95 latency**: if using pino-http, filter on `responseTime` field
 
 ### Sensitive Data
+
 The logger redacts the following fields before shipping:
 `phone`, `recipientPhone`, `recipientPhoneHash`, `authorization`, `cookie`.

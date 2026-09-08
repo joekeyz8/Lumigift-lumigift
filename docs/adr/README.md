@@ -5,6 +5,7 @@ This directory contains Architecture Decision Records (ADRs) for Lumigift. ADRs 
 ## What is an ADR?
 
 An ADR is a short document that captures a single architectural decision. It answers:
+
 - **Why** was this decision made?
 - **What** was decided?
 - **What** are the consequences?
@@ -20,9 +21,9 @@ An ADR is a short document that captures a single architectural decision. It ans
 
 ## Index
 
-| ADR | Title | Status | Date |
-|-----|-------|--------|------|
-| [ADR-0001](0001-blockchain-stellar-soroban.md) | Blockchain Platform — Stellar / Soroban | Accepted | 2024-01-15 |
-| [ADR-0002](0002-payment-provider-paystack.md) | Payment Provider — Paystack (NGN On-Ramp) | Accepted | 2024-01-15 |
-| [ADR-0003](0003-auth-phone-otp.md) | Authentication Method — Phone OTP | Accepted | 2024-01-15 |
-| [ADR-0004](0004-database-postgresql.md) | Database — PostgreSQL | Accepted | 2024-01-15 |
+| ADR                                            | Title                                     | Status   | Date       |
+| ---------------------------------------------- | ----------------------------------------- | -------- | ---------- |
+| [ADR-0001](0001-blockchain-stellar-soroban.md) | Blockchain Platform — Stellar / Soroban   | Accepted | 2024-01-15 |
+| [ADR-0002](0002-payment-provider-paystack.md)  | Payment Provider — Paystack (NGN On-Ramp) | Accepted | 2024-01-15 |
+| [ADR-0003](0003-auth-phone-otp.md)             | Authentication Method — Phone OTP         | Accepted | 2024-01-15 |
+| [ADR-0004](0004-database-postgresql.md)        | Database — PostgreSQL                     | Accepted | 2024-01-15 |

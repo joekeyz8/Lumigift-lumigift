@@ -21,23 +21,25 @@ function sign(params: Record<string, string | number>): string {
     .digest("hex");
 }
 
-export const POST = withErrorHandler(withCsrf(async (_req: NextRequest) => {
-  const timestamp = Math.floor(Date.now() / 1000);
+export const POST = withErrorHandler(
+  withCsrf(async (_req: NextRequest) => {
+    const timestamp = Math.floor(Date.now() / 1000);
 
-  const params: Record<string, string | number> = {
-    timestamp,
-    folder: UPLOAD_FOLDER,
-    allowed_formats: ALLOWED_FORMATS.join(","),
-    max_file_size: MAX_FILE_BYTES,
-  };
+    const params: Record<string, string | number> = {
+      timestamp,
+      folder: UPLOAD_FOLDER,
+      allowed_formats: ALLOWED_FORMATS.join(","),
+      max_file_size: MAX_FILE_BYTES,
+    };
 
-  const signature = sign(params);
+    const signature = sign(params);
 
-  return NextResponse.json({
-    signature,
-    timestamp,
-    folder: UPLOAD_FOLDER,
-    apiKey: process.env.CLOUDINARY_API_KEY,
-    cloudName: process.env.CLOUDINARY_CLOUD_NAME,
-  });
-}));
+    return NextResponse.json({
+      signature,
+      timestamp,
+      folder: UPLOAD_FOLDER,
+      apiKey: process.env.CLOUDINARY_API_KEY,
+      cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+    });
+  })
+);

@@ -21,48 +21,49 @@ async function checkRateLimit(
   return { allowed: count <= limit, retryAfter: ttl };
 }
 
-export const POST = withErrorHandler(withCsrf(async (req: NextRequest) => {
-  const body = await req.json();
-  const phone = normalizePhone(String(body?.phone ?? ""));
+export const POST = withErrorHandler(
+  withCsrf(async (req: NextRequest) => {
+    const body = await req.json();
+    const phone = normalizePhone(String(body?.phone ?? ""));
 
-  if (!phone) {
-    return NextResponse.json<ApiResponse<never>>(
-      { success: false, error: "Invalid phone number" },
-      { status: 400 }
-    );
-  }
+    if (!phone) {
+      return NextResponse.json<ApiResponse<never>>(
+        { success: false, error: "Invalid phone number" },
+        { status: 400 }
+      );
+    }
 
-  const ip =
-    req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
+    const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
 
-  // Per-phone: 3 requests per 10 minutes
-  const phoneCheck = await checkRateLimit(`rl:otp:phone:${phone}`, 3, 600);
-  if (!phoneCheck.allowed) {
-    return NextResponse.json<ApiResponse<never>>(
-      { success: false, error: "Too many OTP requests for this number." },
-      { status: 429, headers: { "Retry-After": String(phoneCheck.retryAfter) } }
-    );
-  }
+    // Per-phone: 3 requests per 10 minutes
+    const phoneCheck = await checkRateLimit(`rl:otp:phone:${phone}`, 3, 600);
+    if (!phoneCheck.allowed) {
+      return NextResponse.json<ApiResponse<never>>(
+        { success: false, error: "Too many OTP requests for this number." },
+        { status: 429, headers: { "Retry-After": String(phoneCheck.retryAfter) } }
+      );
+    }
 
-  // Per-IP: 10 requests per hour
-  const ipCheck = await checkRateLimit(`rl:otp:ip:${ip}`, 10, 3600);
-  if (!ipCheck.allowed) {
-    return NextResponse.json<ApiResponse<never>>(
-      { success: false, error: "Too many OTP requests from this IP." },
-      { status: 429, headers: { "Retry-After": String(ipCheck.retryAfter) } }
-    );
-  }
+    // Per-IP: 10 requests per hour
+    const ipCheck = await checkRateLimit(`rl:otp:ip:${ip}`, 10, 3600);
+    if (!ipCheck.allowed) {
+      return NextResponse.json<ApiResponse<never>>(
+        { success: false, error: "Too many OTP requests from this IP." },
+        { status: 429, headers: { "Retry-After": String(ipCheck.retryAfter) } }
+      );
+    }
 
-  const otp = await sendOtp(phone);
-  await storeOtp(phone, otp);
+    const otp = await sendOtp(phone);
+    await storeOtp(phone, otp);
 
-  if (process.env.NODE_ENV === "development") {
-    console.warn(`[DEV] OTP for ${phone}: ${otp}`);
-  }
+    if (process.env.NODE_ENV === "development") {
+      console.warn(`[DEV] OTP for ${phone}: ${otp}`);
+    }
 
-  // Always return the same body regardless of whether the number is registered.
-  return NextResponse.json<ApiResponse<{ message: string }>>({
-    success: true,
-    data: OTP_RESPONSE,
-  });
-}));
+    // Always return the same body regardless of whether the number is registered.
+    return NextResponse.json<ApiResponse<{ message: string }>>({
+      success: true,
+      data: OTP_RESPONSE,
+    });
+  })
+);

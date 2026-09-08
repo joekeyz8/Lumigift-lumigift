@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withErrorHandler, rateLimit } from "@/server/middleware";
 import { requireAdmin } from "@/server/middleware/admin";
-import { adminListGifts, logAdminAction, type AdminGiftPage } from "@/server/services/admin-gift.service";
+import {
+  adminListGifts,
+  logAdminAction,
+  type AdminGiftPage,
+} from "@/server/services/admin-gift.service";
 import type { ApiResponse, GiftStatus } from "@/types";
 
 export const GET = withErrorHandler(async (req: NextRequest) => {

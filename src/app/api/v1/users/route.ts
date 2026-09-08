@@ -27,10 +27,7 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
     );
   }
 
-  const { rows } = await pool.query(
-    "SELECT 1 FROM users WHERE phone = $1 LIMIT 1",
-    [phone]
-  );
+  const { rows } = await pool.query("SELECT 1 FROM users WHERE phone = $1 LIMIT 1", [phone]);
 
   return NextResponse.json<ApiResponse<{ exists: boolean }>>({
     success: true,

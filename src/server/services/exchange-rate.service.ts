@@ -114,7 +114,7 @@ export async function validateSlippage(
 
   const lockedRate = parseFloat(lockedStr);
   const { ngnPerUsdc: currentRate } = await getExchangeRate();
-  const deviation = Math.abs(currentRate - lockedRate) / lockedRate * 100;
+  const deviation = (Math.abs(currentRate - lockedRate) / lockedRate) * 100;
 
   if (deviation > MAX_SLIPPAGE_PERCENT) {
     return {

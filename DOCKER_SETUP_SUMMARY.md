@@ -15,6 +15,7 @@
   - Only production dependencies and built assets
 
 **Key Features:**
+
 - Reduced image size through multi-stage build
 - Security hardening with non-root user
 - Health checks for container orchestration
@@ -25,18 +26,17 @@
 **File:** `docker-compose.yml`
 
 **Services:**
+
 1. **postgres** (PostgreSQL 16 Alpine)
    - Port: 5432
    - Auto-initializes with migrations from `/migrations` directory
    - Persistent volume for data
    - Health checks configured
-   
 2. **redis** (Redis 7 Alpine)
    - Port: 6379
    - AOF persistence enabled
    - Persistent volume for data
    - Health checks configured
-   
 3. **app** (Next.js application)
    - Port: 3000
    - Depends on postgres and redis (waits for health checks)
@@ -44,6 +44,7 @@
    - Health check endpoint at `/api/health`
 
 **Additional Features:**
+
 - Docker network for service communication
 - Named volumes for data persistence
 - Service dependencies with health check conditions
@@ -52,6 +53,7 @@
 ### 3. docker-compose up starts a fully working local environment ✅
 
 **Verified:**
+
 - All three services start in correct order
 - Database migrations run automatically on first start
 - App waits for database and redis to be healthy before starting
@@ -59,6 +61,7 @@
 - Ports exposed for local development access
 
 **Commands:**
+
 ```bash
 # Start all services
 docker-compose up
@@ -76,16 +79,19 @@ docker-compose down
 ### 4. Environment variables sourced from .env.local ✅
 
 **Files:**
+
 - `.env.local.example` - Template with all required variables
 - `docker-compose.yml` - Reads from `.env.local` via `${VAR_NAME:-default}` syntax
 
 **How it works:**
+
 1. User copies `.env.local.example` to `.env.local`
 2. User fills in actual values (API keys, secrets, etc.)
 3. Docker Compose automatically reads `.env.local`
 4. Variables are passed to containers as environment variables
 
 **Variables configured:**
+
 - App configuration (URL, name)
 - Authentication (NextAuth secrets)
 - Database connection (auto-configured for Docker)
@@ -102,6 +108,7 @@ docker-compose down
 **File:** `README.md`
 
 **Added sections:**
+
 - Prerequisites (Docker & Docker Compose)
 - Quick Start with Docker (step-by-step)
 - What's included (service list)
@@ -110,6 +117,7 @@ docker-compose down
 - Manual installation (for non-Docker users)
 
 **Documentation is:**
+
 - Clear and beginner-friendly
 - Includes copy-paste commands
 - Explains what each service does
@@ -120,6 +128,7 @@ docker-compose down
 **File:** `.dockerignore`
 
 **Excluded:**
+
 - `node_modules/` - Dependencies (reinstalled in container)
 - `.env*` - Environment files (security)
 - `.next/`, `out/`, `build/`, `dist/` - Build artifacts
@@ -133,6 +142,7 @@ docker-compose down
 - Logs and temporary files
 
 **Benefits:**
+
 - Faster builds (smaller context)
 - Smaller images
 - Better security (no secrets in image)
@@ -177,7 +187,7 @@ docker-compose down
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/JosephOnuh/Lumigift-lumigift.git
+git clone https://github.com/joekeyz8/Lumigift-lumigift.git
 cd lumigift
 
 # 2. Set up environment
@@ -199,18 +209,21 @@ docker-compose up
 ## 🎯 Benefits
 
 ### For New Contributors
+
 - **Zero manual setup** - No need to install PostgreSQL, Redis, or Node.js
 - **One command start** - `docker-compose up` and everything works
 - **Consistent environment** - Same setup for everyone
 - **Easy cleanup** - `docker-compose down -v` removes everything
 
 ### For Development
+
 - **Hot reload** - Changes reflect immediately in dev mode
 - **Isolated environment** - No conflicts with other projects
 - **Easy testing** - Spin up fresh database anytime
 - **Production parity** - Same services as production
 
 ### For Production
+
 - **Optimized builds** - Multi-stage reduces image size
 - **Security hardened** - Non-root user, minimal base image
 - **Health checks** - Automatic restart on failure
@@ -219,15 +232,18 @@ docker-compose up
 ## 📊 Technical Details
 
 ### Image Sizes (Estimated)
+
 - **Development image:** ~1.2GB (includes all dependencies)
 - **Production image:** ~200MB (standalone build, Alpine base)
 
 ### Build Time (Estimated)
+
 - **First build:** 3-5 minutes (downloads base images, installs deps)
 - **Subsequent builds:** 30-60 seconds (uses layer cache)
 - **Development mode:** 1-2 minutes (no build step)
 
 ### Resource Usage
+
 - **App container:** ~200MB RAM, 0.5 CPU
 - **PostgreSQL:** ~50MB RAM, 0.1 CPU
 - **Redis:** ~20MB RAM, 0.1 CPU
@@ -236,6 +252,7 @@ docker-compose up
 ## 🔒 Security Features
 
 ✅ **Implemented:**
+
 - Non-root user in production container
 - Minimal Alpine Linux base images
 - No secrets in Dockerfile or docker-compose.yml
@@ -281,6 +298,7 @@ docker-compose down
 ## 🎉 Success Criteria
 
 All acceptance criteria have been met:
+
 - ✅ Multi-stage Dockerfile created
 - ✅ docker-compose.yml with all three services
 - ✅ One-command startup works

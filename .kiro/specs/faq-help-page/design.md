@@ -9,12 +9,14 @@ The page will be structured around five key topic areas: how gifts work, support
 ## Architecture
 
 ### Route Structure
+
 - **Path**: `/help` (primary route)
 - **Alternative**: `/faq` (redirect to `/help` for SEO consolidation)
 - **Implementation**: Next.js App Router page component at `src/app/help/page.tsx`
 - **Layout**: Inherits from root layout with existing Navbar component
 
 ### Component Architecture
+
 ```
 src/app/help/
 ├── page.tsx              # Main FAQ page component
@@ -25,6 +27,7 @@ src/app/help/
 ```
 
 ### Content Management
+
 - **Static Content**: FAQ content will be defined as structured data within the page component
 - **Maintainability**: Content organized as TypeScript objects for easy updates
 - **Internationalization Ready**: Structure supports future i18n implementation
@@ -32,15 +35,17 @@ src/app/help/
 ## Components and Interfaces
 
 ### FAQPage Component
+
 ```typescript
 interface FAQPageProps {
   // No props - static content page
 }
 
-export default function FAQPage(): JSX.Element
+export default function FAQPage(): JSX.Element;
 ```
 
 ### FAQSection Component
+
 ```typescript
 interface FAQSectionProps {
   title: string;
@@ -57,6 +62,7 @@ interface FAQItem {
 ```
 
 ### Navigation Integration
+
 The existing `Navbar.tsx` component will be updated to include a help link:
 
 ```typescript
@@ -71,6 +77,7 @@ The existing `Navbar.tsx` component will be updated to include a help link:
 ## Data Models
 
 ### FAQ Content Structure
+
 ```typescript
 interface FAQContent {
   sections: FAQSection[];
@@ -102,6 +109,7 @@ interface FAQItem {
 ```
 
 ### Content Organization
+
 The FAQ content will be organized into five main sections:
 
 1. **How Gifts Work** (`how-gifts-work`)
@@ -137,27 +145,34 @@ The FAQ content will be organized into five main sections:
 ## Error Handling
 
 ### Route Handling
+
 - **404 Prevention**: Static route ensures `/help` always returns 200
 - **Fallback Content**: Graceful degradation if content fails to load
 - **Error Boundaries**: React error boundary for component-level failures
 
 ### Content Validation
+
 ```typescript
 // Content validation schema
 const FAQContentSchema = z.object({
-  sections: z.array(z.object({
-    id: z.string(),
-    title: z.string(),
-    items: z.array(z.object({
+  sections: z.array(
+    z.object({
       id: z.string(),
-      question: z.string(),
-      answer: z.union([z.string(), z.any()]), // JSX.Element
-    }))
-  }))
+      title: z.string(),
+      items: z.array(
+        z.object({
+          id: z.string(),
+          question: z.string(),
+          answer: z.union([z.string(), z.any()]), // JSX.Element
+        })
+      ),
+    })
+  ),
 });
 ```
 
 ### Accessibility Error Prevention
+
 - **Semantic HTML**: Proper heading hierarchy (h1 → h2 → h3)
 - **ARIA Labels**: Screen reader navigation support
 - **Focus Management**: Keyboard navigation between sections
@@ -166,38 +181,42 @@ const FAQContentSchema = z.object({
 ## Testing Strategy
 
 ### Unit Testing
+
 - **Component Rendering**: Verify all FAQ sections render correctly
 - **Content Accuracy**: Validate FAQ answers match system behavior
 - **Link Functionality**: Test navigation links work properly
 - **Accessibility**: Automated accessibility testing with jest-axe
 
 ### Integration Testing
+
 - **Route Access**: Verify `/help` returns 200 for authenticated/unauthenticated users
 - **Navigation Integration**: Test help links from landing page and dashboard
 - **SEO Metadata**: Validate page title and meta description
 - **Responsive Design**: Test rendering across viewport sizes (320px-1440px)
 
 ### Content Validation Testing
+
 - **Accuracy Checks**: Automated tests to verify FAQ content matches actual system behavior
 - **Link Validation**: Test all internal and external links are functional
 - **Content Completeness**: Ensure all required sections and items are present
 
 ### Example Test Cases
+
 ```typescript
-describe('FAQ Page', () => {
-  it('renders all required sections', () => {
+describe("FAQ Page", () => {
+  it("renders all required sections", () => {
     // Test that all 5 main sections are present
   });
 
-  it('provides accurate cancellation information', () => {
+  it("provides accurate cancellation information", () => {
     // Verify cancellation rules match gift service implementation
   });
 
-  it('includes proper navigation links', () => {
+  it("includes proper navigation links", () => {
     // Test help links in navbar and footer
   });
 
-  it('meets accessibility standards', () => {
+  it("meets accessibility standards", () => {
     // Automated accessibility testing
   });
 });
@@ -215,12 +234,13 @@ This feature involves static content rendering, navigation, and UI layout - area
 **Recommended Testing Methods**:
 
 1. **Snapshot Testing**: For consistent UI rendering across updates
-2. **Content Validation**: Verify FAQ answers accurately reflect system behavior  
+2. **Content Validation**: Verify FAQ answers accurately reflect system behavior
 3. **Accessibility Testing**: Automated checks for WCAG compliance
 4. **Integration Testing**: End-to-end navigation and routing verification
 5. **Visual Regression Testing**: Ensure responsive design works across viewports
 
 **Test Coverage Goals**:
+
 - 100% component rendering coverage
 - All navigation paths tested
 - Content accuracy validation against actual system behavior

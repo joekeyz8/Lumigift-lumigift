@@ -96,23 +96,17 @@ describe("claimGift", () => {
 
   it("throws when the gift is not yet unlocked (status: locked)", async () => {
     const gift = makeGift({ status: "locked" });
-    await expect(claimGift(gift, RECIPIENT_KEY)).rejects.toThrow(
-      "Gift is not yet unlocked."
-    );
+    await expect(claimGift(gift, RECIPIENT_KEY)).rejects.toThrow("Gift is not yet unlocked.");
   });
 
   it("throws when the gift is already claimed", async () => {
     const gift = makeGift({ status: "claimed" });
-    await expect(claimGift(gift, RECIPIENT_KEY)).rejects.toThrow(
-      "Gift is not yet unlocked."
-    );
+    await expect(claimGift(gift, RECIPIENT_KEY)).rejects.toThrow("Gift is not yet unlocked.");
   });
 
   it("throws when the gift is still pending payment", async () => {
     const gift = makeGift({ status: "pending_payment" });
-    await expect(claimGift(gift, RECIPIENT_KEY)).rejects.toThrow(
-      "Gift is not yet unlocked."
-    );
+    await expect(claimGift(gift, RECIPIENT_KEY)).rejects.toThrow("Gift is not yet unlocked.");
   });
 
   it("does not call sendUsdcPayment when the gift is not unlocked", async () => {
@@ -122,13 +116,9 @@ describe("claimGift", () => {
   });
 
   it("propagates Stellar contract call failures", async () => {
-    (sendUsdcPayment as jest.Mock).mockRejectedValue(
-      new Error("Stellar submission failed")
-    );
+    (sendUsdcPayment as jest.Mock).mockRejectedValue(new Error("Stellar submission failed"));
     const gift = makeGift();
-    await expect(claimGift(gift, RECIPIENT_KEY)).rejects.toThrow(
-      "Stellar submission failed"
-    );
+    await expect(claimGift(gift, RECIPIENT_KEY)).rejects.toThrow("Stellar submission failed");
   });
 
   it("does not update gift status when the Stellar call fails", async () => {

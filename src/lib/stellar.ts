@@ -16,9 +16,7 @@ const server = new Horizon.Server(serverConfig.stellar.horizonUrl);
 const USDC = new Asset(serverConfig.usdc.assetCode, serverConfig.usdc.issuer);
 
 const networkPassphrase =
-  serverConfig.stellar.network === "mainnet"
-    ? Networks.PUBLIC
-    : Networks.TESTNET;
+  serverConfig.stellar.network === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
 
 /**
  * Derives and returns the server's Stellar public key from the configured secret.
@@ -27,10 +25,7 @@ const networkPassphrase =
 export function getServerPublicKey(): string {
   const keypair = Keypair.fromSecret(serverConfig.stellar.serverSecretKey);
   const publicKey = keypair.publicKey();
-  logger.info(
-    { event: "stellar_key_loaded", publicKey },
-    "Stellar server signing key loaded"
-  );
+  logger.info({ event: "stellar_key_loaded", publicKey }, "Stellar server signing key loaded");
   return publicKey;
 }
 
@@ -88,9 +83,7 @@ export async function loadAccount(publicKey: string): Promise<StellarAccount> {
 export async function getUsdcBalance(publicKey: string): Promise<string> {
   try {
     const account = await loadAccount(publicKey);
-    const usdcBalance = account.balances.find(
-      (b) => b.assetCode === serverConfig.usdc.assetCode
-    );
+    const usdcBalance = account.balances.find((b) => b.assetCode === serverConfig.usdc.assetCode);
     return usdcBalance?.balance ?? "0";
   } catch {
     return "0";

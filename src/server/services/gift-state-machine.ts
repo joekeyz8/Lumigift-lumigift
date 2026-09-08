@@ -5,14 +5,14 @@ import type { GiftStatus } from "@/types";
 // invalid state changes such as re-funding a claimed gift.
 const TRANSITIONS: Record<GiftStatus, Set<GiftStatus>> = {
   pending_payment: new Set<GiftStatus>(["funded", "cancelled"]),
-  funded:          new Set<GiftStatus>(["locked", "cancelled"]),
-  locked:          new Set<GiftStatus>(["unlocked", "cancelled"]),
-  unlocked:        new Set<GiftStatus>(["claimed", "cancelled"]),
-  claimed:         new Set<GiftStatus>(),
-  cancelled:       new Set<GiftStatus>(),
+  funded: new Set<GiftStatus>(["locked", "cancelled"]),
+  locked: new Set<GiftStatus>(["unlocked", "cancelled"]),
+  unlocked: new Set<GiftStatus>(["claimed", "cancelled"]),
+  claimed: new Set<GiftStatus>(),
+  cancelled: new Set<GiftStatus>(),
   // legacy / edge statuses
-  draft:           new Set<GiftStatus>(["pending_payment", "cancelled"]),
-  expired:         new Set<GiftStatus>(),
+  draft: new Set<GiftStatus>(["pending_payment", "cancelled"]),
+  expired: new Set<GiftStatus>(),
 };
 
 /**
@@ -38,8 +38,6 @@ export function isValidTransition(current: GiftStatus, next: GiftStatus): boolea
  */
 export function assertValidTransition(current: GiftStatus, next: GiftStatus): void {
   if (!isValidTransition(current, next)) {
-    throw new Error(
-      `Invalid gift status transition: "${current}" → "${next}"`
-    );
+    throw new Error(`Invalid gift status transition: "${current}" → "${next}"`);
   }
 }
