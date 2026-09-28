@@ -1,4 +1,4 @@
-# Cargo Audit Configuration for Lumigift Smart Contracts
+# Cargo Audit Configuration for Lumigift Smart Contracts Workspace
 # Documentation: https://github.com/rustsec/rustsec/blob/main/cargo-audit/audit.toml.example
 #
 # Policy:
@@ -35,7 +35,6 @@ quiet = false
 deny = ["unmaintained", "unsound"]
 
 [database]
-# Path to the advisory database git repository cache
 url = "https://github.com/rustsec/advisory-db.git"
 fetch = true
 stale = "warn"

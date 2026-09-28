@@ -374,3 +374,27 @@ export async function updateGiftStatusIdempotent(
 export async function getGiftsByStatus(status: GiftStatus): Promise<Gift[]> {
   return [...gifts.values()].filter((g) => g.status === status);
 }
+
+/**
+ * Evaluates whether a gift's unlock time has been reached using the canonical inclusive rule.
+ *
+ * Boundary semantics (strictly aligned with Soroban contract `contracts/escrow/src/lib.rs`):
+ * - `now < unlockAt`:  Locked (`false`)
+ * - `now >= unlockAt`: Unlocked (`true`) — a claim is valid exactly at `unlockAt`.
+ *
+ * On-chain Soroban contract logic:
+ *   `if env.ledger().timestamp() < unlock_time { return Err(EscrowError::StillLocked); }`
+ *
+ * @param gift - An object containing the `unlockAt` date (or date string/timestamp).
+ * @param now  - Reference date for evaluation (defaults to current system time).
+ * @returns `true` if `now >= unlockAt` (inclusive), `false` otherwise.
+ */
+export function isGiftUnlocked(
+  gift: { unlockAt: Date | string | number },
+  now: Date | number = new Date()
+): boolean {
+  const unlockMs = new Date(gift.unlockAt).getTime();
+  const nowMs = typeof now === "number" ? now : now.getTime();
+  return nowMs >= unlockMs;
+}
+
