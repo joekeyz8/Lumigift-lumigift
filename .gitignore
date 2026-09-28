@@ -34,6 +34,14 @@ Thumbs.db
 
 # Testing
 coverage/
+__snapshots__/
+test-results/
+playwright-report/
+blob-report/
+stryker-tmp/
+
+# Kiro IDE
+.kiro/
 
 # Rust / Cargo (contracts)
 contracts/target/

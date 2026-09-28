@@ -45,6 +45,129 @@ resource "aws_db_instance" "postgres" {
   deletion_protection    = var.env == "prod"
   storage_encrypted      = true
 
+  # ── #104: Automated backups & PITR ─────────────────────────────────────────
+  backup_retention_period = 30               # days — enables PITR for the full window
+  backup_window           = "02:00-03:00"    # UTC, during low-traffic hours
+  maintenance_window      = "sun:03:00-sun:04:00"
+  copy_tags_to_snapshot   = true
+
+  tags = local.tags
+}
+
+# ─── #104: S3 bucket for encrypted pg_dump off-site backups ──────────────────
+
+resource "aws_s3_bucket" "backups" {
+  bucket        = "lumigift-backups-${var.env}"
+  force_destroy = var.env != "prod"
+
+  tags = local.tags
+}
+
+resource "aws_s3_bucket_versioning" "backups" {
+  bucket = aws_s3_bucket.backups.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "backups" {
+  bucket = aws_s3_bucket.backups.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "aws:kms"
+    }
+    bucket_key_enabled = true
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "backups" {
+  bucket                  = aws_s3_bucket.backups.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "backups" {
+  bucket = aws_s3_bucket.backups.id
+  rule {
+    id     = "expire-postgres-backups"
+    status = "Enabled"
+    filter { prefix = "postgres/" }
+    expiration { days = 30 }
+  }
+}
+
+# ─── #104: IAM user + restricted policy for CI backup job ────────────────────
+
+resource "aws_iam_user" "backup_runner" {
+  name = "lumigift-backup-${var.env}"
+  tags = local.tags
+}
+
+resource "aws_iam_access_key" "backup_runner" {
+  user = aws_iam_user.backup_runner.name
+}
+
+resource "aws_iam_user_policy" "backup_runner" {
+  name = "lumigift-backup-s3-${var.env}"
+  user = aws_iam_user.backup_runner.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowBackupUpload"
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          aws_s3_bucket.backups.arn,
+          "${aws_s3_bucket.backups.arn}/postgres/*"
+        ]
+      },
+      {
+        Sid    = "AllowKMSForBackupBucket"
+        Effect = "Allow"
+        Action = [
+          "kms:GenerateDataKey",
+          "kms:Decrypt"
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "s3.${var.aws_region}.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+}
+
+# ─── #104: SNS topic for backup failure alerts ────────────────────────────────
+
+resource "aws_sns_topic" "backup_alerts" {
+  name = "lumigift-db-backup-alerts-${var.env}"
+  tags = local.tags
+}
+
+resource "aws_sns_topic_subscription" "backup_alerts_email" {
+  topic_arn = aws_sns_topic.backup_alerts.arn
+  protocol  = "email"
+  endpoint  = var.ops_alert_email
+}
+
+resource "aws_rds_event_subscription" "backup_events" {
+  name      = "lumigift-backup-events-${var.env}"
+  sns_topic = aws_sns_topic.backup_alerts.arn
+
+  source_type      = "db-instance"
+  source_ids       = [aws_db_instance.postgres.identifier]
+  event_categories = ["backup", "notification", "failure"]
+
   tags = local.tags
 }
 
