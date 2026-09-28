@@ -105,3 +105,42 @@ export function rateLimit(key: string, limit: number, windowMs: number): boolean
   entry.count++;
   return true;
 }
+
+/**
+ * Rejects requests whose `Content-Length` header exceeds `maxBytes`.
+ *
+ * This is a defence-in-depth check that runs *before* the body is read,
+ * so oversized payloads are rejected cheaply without buffering them.
+ * The limit is also enforced by Next.js server-action config, but route
+ * handlers benefit from this explicit guard.
+ *
+ * @param maxBytes - Maximum allowed body size in bytes.
+ * @returns A wrapper that returns 413 when the declared body is too large.
+ *
+ * @example
+ * // Limit a route to 64 KB of JSON
+ * export const POST = withErrorHandler(
+ *   withBodySizeLimit(64 * 1024)(withCsrf(handler))
+ * );
+ */
+export function withBodySizeLimit(maxBytes: number) {
+  return function (handler: Handler): Handler {
+    return async (req, context) => {
+      const contentLength = req.headers.get("content-length");
+      if (contentLength !== null) {
+        const bytes = parseInt(contentLength, 10);
+        if (!isNaN(bytes) && bytes > maxBytes) {
+          return NextResponse.json<ApiError>(
+            {
+              success: false,
+              error: `Request body too large. Maximum allowed size is ${maxBytes} bytes.`,
+              code: "PAYLOAD_TOO_LARGE",
+            },
+            { status: 413 }
+          );
+        }
+      }
+      return handler(req, context);
+    };
+  };
+}
