@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { createGiftSchema, type CreateGiftInput, type CreateGiftFormInput } from "@/types/schemas";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
+import { DateTimeInput } from "@/components/ui/DateTimeInput";
 import { OfflineBanner } from "@/components/ui/OfflineBanner";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { TemplateSelector } from "./TemplateSelector";
@@ -269,11 +270,13 @@ export function GiftWizard() {
       {step === STEP_UNLOCK && (
         <div className={styles.stepContent}>
           <h2 className={styles.stepTitle}>When should it unlock?</h2>
-          <Input
+          <DateTimeInput
             label="Unlock Date &amp; Time"
-            type="datetime-local"
+            value={getValues("unlockAt")}
+            onChange={(utcIso) => setValue("unlockAt", utcIso, { shouldValidate: true })}
+            hint="Choose a future date and time. The recipient won't see the gift until then."
             error={errors.unlockAt?.message}
-            {...register("unlockAt")}
+            required
           />
           <div className={styles.nav}>
             <Button variant="secondary" onClick={back}>
