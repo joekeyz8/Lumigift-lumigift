@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { processExpiries } from "@/server/services/scheduler.service";
+import { startTimer, recordCronSuccess, recordCronFailure } from "@/lib/metrics";
 import type { ApiResponse } from "@/types";
 
 /**
@@ -16,9 +17,24 @@ export const GET = async (req: NextRequest) => {
     );
   }
 
-  await processExpiries();
-  return NextResponse.json<ApiResponse<{ message: string }>>({
-    success: true,
-    data: { message: "Expiry check complete" },
-  });
+  const elapsed = startTimer();
+
+  try {
+    await processExpiries();
+    const durationMs = elapsed();
+
+    recordCronSuccess("cron/v1/expire", durationMs);
+
+    return NextResponse.json<ApiResponse<{ message: string }>>({
+      success: true,
+      data: { message: "Expiry check complete" },
+    });
+  } catch (err) {
+    const durationMs = elapsed();
+    recordCronFailure("cron/v1/expire", durationMs, err);
+    return NextResponse.json<ApiResponse<never>>(
+      { success: false, error: "Expiry cron job failed" },
+      { status: 500 }
+    );
+  }
 };
