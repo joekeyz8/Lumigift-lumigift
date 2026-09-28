@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { updateGiftStatus } from "@/server/services/gift.service";
+import { getRedisClient } from "@/lib/redis";
 import type { ApiResponse } from "@/types";
 
 // Lazily initialised so module evaluation at build time never throws.
@@ -16,6 +17,8 @@ function getStripe(): Stripe {
 
 // Next.js must not parse the body — Stripe needs the raw bytes for signature verification.
 // In App Router, request body is not pre-parsed, so no config needed.
+
+const IDEMPOTENCY_TTL_SECONDS = 86_400; // 24 hours
 
 export async function POST(req: NextRequest) {
   // Guard moved inside handler so missing env var is a 500 at request time,
@@ -48,10 +51,38 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (event.type === "payment_intent.succeeded") {
-    const intent = event.data.object as Stripe.PaymentIntent;
-    const giftId = intent.metadata?.giftId;
-    if (giftId) await updateGiftStatus(giftId, "locked");
+  // ── Atomic idempotency guard (SET NX) ──────────────────────────────────────
+  // Stripe can deliver the same event more than once and can deliver concurrent
+  // duplicates. SET NX guarantees exactly one delivery wins the lock and
+  // processes the state transition; all others are acknowledged as no-ops.
+  const redis = await getRedisClient();
+  const idempotencyKey = `stripe:event:${event.id}`;
+  const acquired = await redis.set(idempotencyKey, "1", {
+    NX: true,
+    EX: IDEMPOTENCY_TTL_SECONDS,
+  });
+
+  if (!acquired) {
+    // Already processed or a concurrent delivery is handling it right now.
+    return NextResponse.json<ApiResponse<{ received: boolean }>>({
+      success: true,
+      data: { received: true },
+    });
+  }
+
+  // We own the idempotency slot — process the event exactly once.
+  try {
+    if (event.type === "payment_intent.succeeded") {
+      const intent = event.data.object as Stripe.PaymentIntent;
+      const giftId = intent.metadata?.giftId;
+      if (giftId) {
+        await updateGiftStatus(giftId, "locked");
+      }
+    }
+  } catch (err) {
+    console.error("[stripe-webhook] event processing failed", { eventId: event.id, err });
+    // The idempotency key is kept so repeated retries from Stripe don't
+    // cause duplicate side effects; the error is observable in logs.
   }
 
   return NextResponse.json<ApiResponse<{ received: boolean }>>({

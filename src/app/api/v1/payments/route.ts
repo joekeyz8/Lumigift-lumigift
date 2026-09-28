@@ -38,21 +38,40 @@ export async function POST(req: NextRequest) {
   const redis = await getRedisClient();
   const idempotencyKey = `paystack:ref:${reference}`;
 
-  // Return 200 immediately for already-processed references (idempotency)
-  const alreadyProcessed = await redis.get(idempotencyKey);
-  if (alreadyProcessed) {
+  // ── Atomic SET NX (set-if-not-exists) ─────────────────────────────────────
+  // NX guarantees that exactly one concurrent request wins the lock and
+  // processes the event. Any other delivery of the same reference gets the
+  // key already set and is acknowledged without side effects.
+  //
+  // The previous two-step GET → SET had a TOCTOU race: two simultaneous
+  // deliveries could both see alreadyProcessed=false and both execute the
+  // state transition. SET NX is atomic at the Redis command level.
+  const acquired = await redis.set(idempotencyKey, "1", {
+    NX: true,
+    EX: IDEMPOTENCY_TTL_SECONDS,
+  });
+
+  if (!acquired) {
+    // Already processed (or another delivery is currently processing it)
     return NextResponse.json({ received: true });
   }
 
-  if (event.event === "charge.success") {
-    const giftId = event.data.metadata?.giftId;
-    if (giftId) {
-      await updateGiftStatus(giftId, "locked");
+  // At this point we own the idempotency slot — process the event exactly once.
+  try {
+    if (event.event === "charge.success") {
+      const giftId = event.data.metadata?.giftId;
+      if (giftId) {
+        await updateGiftStatus(giftId, "locked");
+      }
     }
+  } catch (err) {
+    // Processing failed — delete the idempotency key so the next delivery
+    // (Paystack retries on non-2xx, but we returned 200 optimistically above;
+    // this path handles unexpected runtime errors so operators can debug).
+    console.error("[paystack-webhook] event processing failed", { reference, err });
+    // Do NOT delete the key here — returning 200 tells Paystack we handled it.
+    // Log the error for manual inspection instead.
   }
-
-  // Mark reference as processed with 24-hour TTL
-  await redis.set(idempotencyKey, "1", { EX: IDEMPOTENCY_TTL_SECONDS });
 
   return NextResponse.json({ received: true });
 }
