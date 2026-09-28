@@ -22,6 +22,15 @@
   }
 }
 
+/* Respect reduced-motion: stop spinner rotation, show static indicator */
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+    border-top-color: currentColor;
+    opacity: 0.6;
+  }
+}
+
 .error {
   font-size: var(--text-xs);
   color: var(--color-error, #e53e3e);
