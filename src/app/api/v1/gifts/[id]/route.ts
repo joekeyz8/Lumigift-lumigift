@@ -78,16 +78,21 @@ export const DELETE = withErrorHandler(
       );
     }
 
-    if (gift.status !== "locked" && gift.status !== "pending_payment") {
+    // Cancellable statuses mirror the on-chain contract behaviour:
+    //   - pending_payment: NGN received but USDC not yet locked
+    //   - funded: USDC funding in progress, contract not yet initialised
+    //   - locked: gift is locked on-chain, unlock time not reached
+    //   - unlocked: unlock time has passed but recipient has NOT yet claimed
+    //
+    // The smart contract allows cancel() in both the Locked and Unlocked states.
+    // The backend must mirror this so that senders can reclaim funds from the
+    // unclaimed-but-unlocked window (issue #78).
+    //
+    // Terminal statuses (claimed, cancelled, expired) cannot be cancelled.
+    const cancellableStatuses = new Set(["pending_payment", "funded", "locked", "unlocked"]);
+    if (!cancellableStatuses.has(gift.status)) {
       return NextResponse.json<ApiResponse<never>>(
         { success: false, error: "Gift cannot be cancelled in its current state" },
-        { status: 409 }
-      );
-    }
-
-    if (new Date() >= gift.unlockAt) {
-      return NextResponse.json<ApiResponse<never>>(
-        { success: false, error: "Gift unlock time has already passed" },
         { status: 409 }
       );
     }
