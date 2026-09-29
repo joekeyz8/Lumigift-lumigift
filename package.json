@@ -46,6 +46,16 @@
     "docker:down": "docker-compose down",
     "docker:build": "docker-compose build",
     "docker:logs": "docker-compose logs -f",
+    "docker:lint": "hadolint Dockerfile",
+    "docker:scan": "trivy image lumigift-app:latest",
+    "docker:sbom": "syft lumigift-app:latest -o spdx-json=lumigift-sbom.spdx.json -o cyclonedx-json=lumigift-sbom.cdx.json",
+    "docker:check": "bash scripts/docker-security-check.sh",
+    "security:validate": "ts-node scripts/validate-security-exceptions.ts",
+    "security:scan:npm": "npm audit --audit-level=critical",
+    "security:scan:cargo": "cd contracts && cargo audit",
+    "security:scan:terraform": "trivy config infra/terraform --severity CRITICAL,HIGH",
+    "security:scan:docker": "trivy image lumigift-app:latest --severity CRITICAL",
+    "security:scan": "ts-node scripts/run-all-scans.ts",
     "prepare": "husky"
   },
   "dependencies": {

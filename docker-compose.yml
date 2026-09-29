@@ -11,8 +11,10 @@
 services:
   # ─── PostgreSQL Database ────────────────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.8-alpine3.21
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-lumigift}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Error: POSTGRES_PASSWORD must be provided from managed secret store}
@@ -33,8 +35,10 @@ services:
 
   # ─── Redis Cache/Queue ──────────────────────────────────────────────────────
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.2-alpine3.21
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "6379:6379"
     command: >
@@ -54,13 +58,18 @@ services:
     networks:
       - lumigift-network
 
-  # ─── Next.js Application ────────────────────────────────────────────────────
+  # ─── Next.js Application (Hardened Production) ──────────────────────────────
   app:
     build:
       context: .
       dockerfile: Dockerfile
       target: runner
     restart: unless-stopped
+    user: "1001:1001"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
       - "3000:3000"
     environment:
