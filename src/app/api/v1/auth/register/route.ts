@@ -1,27 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
-import { normalizePhone } from "@/lib/phone";
-import { withErrorHandler, withCsrf, withBodySizeLimit } from "@/server/middleware";
+import { withErrorHandler, withCsrf, validateBody } from "@/server/middleware";
 import { validateInvitationToken, acceptInvitation } from "@/server/services/invitation.service";
 import { randomUUID } from "crypto";
+import { registerSchema } from "@/types/schemas";
 import type { ApiResponse } from "@/types";
 
-const registerSchema = {
-  phone: (val: string) => normalizePhone(val),
-  displayName: (val: string) => typeof val === "string" && val.length >= 2,
-  invitationToken: (val: string) => typeof val === "string" && val.length > 0,
-};
-
 export const POST = withErrorHandler(
-  withBodySizeLimit(4 * 1024)(
-    withCsrf(async (req: NextRequest) => {
-      const body = await req.json();
+  withCsrf(async (req: NextRequest) => {
+    const validation = await validateBody(req, registerSchema);
+    if (!validation.success) return validation.response;
+    const { phone, displayName, invitationToken } = validation.data;
 
-      const phone = normalizePhone(String(body?.phone ?? ""));
-      const displayName = String(body?.displayName ?? "").trim();
-      const invitationToken = String(body?.invitationToken ?? "").trim();
+    // Check if phone is already registered
+    const { rows: existingUsers } = await pool.query(
+      "SELECT 1 FROM users WHERE phone = $1 LIMIT 1",
+      [phone]
+    );
 
-      if (!phone) {
+    if (existingUsers.length > 0) {
+      return NextResponse.json<ApiResponse<never>>(
+        { success: false, error: "This phone number is already registered" },
+        { status: 409 }
+      );
+    }
+
+    // If invitation token is provided, validate it
+    let invitationId: string | null = null;
+    if (invitationToken) {
+      const invitation = await validateInvitationToken(invitationToken);
+      if (!invitation) {
         return NextResponse.json<ApiResponse<never>>(
           { success: false, error: "Invalid phone number" },
           { status: 400 }

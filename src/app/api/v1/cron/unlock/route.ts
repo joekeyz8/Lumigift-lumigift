@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { processUnlocks } from "@/server/services/scheduler.service";
+import { startTimer, recordCronSuccess, recordCronFailure } from "@/lib/metrics";
 import type { ApiResponse } from "@/types";
 
 /** Ping a dead-man's-switch URL (e.g. Healthchecks.io / BetterUptime). */
@@ -9,6 +10,7 @@ async function pingHealthcheck(suffix = "") {
   try {
     await fetch(`${url}${suffix}`, { method: "GET" });
   } catch (err) {
+    // Non-fatal: healthcheck ping failure should never mask the actual result
     console.error("[cron] healthcheck ping failed", err);
   }
 }
@@ -23,16 +25,13 @@ export const GET = async (req: NextRequest) => {
     );
   }
 
-  const startedAt = new Date();
-  console.log("[cron] unlock run started", { startedAt });
+  const elapsed = startTimer();
 
   try {
     const processed = await processUnlocks();
-    const finishedAt = new Date();
-    const durationMs = finishedAt.getTime() - startedAt.getTime();
+    const durationMs = elapsed();
 
-    console.log("[cron] unlock run complete", { finishedAt, durationMs, processed });
-
+    recordCronSuccess("cron/v1/unlock", durationMs, { processed });
     await pingHealthcheck(); // success ping
 
     return NextResponse.json<ApiResponse<{ processed: number; durationMs: number }>>({
@@ -40,7 +39,8 @@ export const GET = async (req: NextRequest) => {
       data: { processed, durationMs },
     });
   } catch (err) {
-    console.error("[cron] unlock run failed", { startedAt, error: err });
+    const durationMs = elapsed();
+    recordCronFailure("cron/v1/unlock", durationMs, err);
     await pingHealthcheck("/fail"); // failure ping
     return NextResponse.json<ApiResponse<never>>(
       { success: false, error: "Cron job failed" },
