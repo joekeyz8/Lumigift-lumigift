@@ -23,6 +23,8 @@ function getStripe(): Stripe {
 // Next.js must not parse the body — Stripe needs the raw bytes for signature verification.
 // In App Router, request body is not pre-parsed, so no config needed.
 
+const IDEMPOTENCY_TTL_SECONDS = 86_400; // 24 hours
+
 export async function POST(req: NextRequest) {
   const elapsed = startTimer();
 
