@@ -16,6 +16,7 @@ import {
 } from "@/server/services/payment-reconciliation.service";
 import type { ApiResponse } from "@/types";
 import type { ReconcileResult } from "@/server/services/payment-reconciliation.service";
+import { isAuthorizedCronRequest } from "@/server/cron-auth";
 
 /** Ping a dead-man's-switch URL (e.g. Healthchecks.io / BetterUptime). */
 async function pingHealthcheck(suffix = "") {
@@ -30,7 +31,7 @@ async function pingHealthcheck(suffix = "") {
 
 export const GET = async (req: NextRequest) => {
   const authHeader = req.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isAuthorizedCronRequest(authHeader)) {
     return NextResponse.json<ApiResponse<never>>(
       { success: false, error: "Unauthorized" },
       { status: 401 }

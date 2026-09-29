@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { processUnlocks } from "@/server/services/scheduler.service";
 import type { ApiResponse } from "@/types";
+import { isAuthorizedCronRequest } from "@/server/cron-auth";
 
 /**
  * GET /api/cron/unlock
@@ -12,9 +13,8 @@ import type { ApiResponse } from "@/types";
  */
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
-  const cronSecret = process.env.CRON_SECRET;
 
-  if (!authHeader || !cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+  if (!isAuthorizedCronRequest(authHeader)) {
     return NextResponse.json<ApiResponse<never>>(
       { success: false, error: "Unauthorized", code: "UNAUTHORIZED" },
       { status: 401 }

@@ -1,6 +1,6 @@
 import { randomUUID, createHash } from "crypto";
 import pool from "@/lib/db";
-import type { Gift, GiftStatus } from "@/types";
+import type { Gift, GiftStatus, RefundStatus } from "@/types";
 import type { CreateGiftInput } from "@/types/schemas";
 import { initializePayment, ngnToKobo } from "@/lib/paystack";
 import { formatNGN } from "@/lib/currency";
@@ -299,17 +299,25 @@ export async function getGiftsByRecipient(phone: string): Promise<Gift[]> {
 }
 
 /**
- * Cancels a gift by setting its status to `"cancelled"`.
- * Does not validate the current status — callers should check eligibility first.
+ * Cancels a gift by transitioning it to `"cancelled"`.
+ *
+ * Goes through {@link updateGiftStatus} so the state machine is enforced and a
+ * `gift_cancelled` audit entry is written. Callers should check eligibility
+ * first (see `cancellation.service.ts`).
  *
  * @param id - The gift UUID.
+ * @param refundStatus - Refund progress to record on the gift.
  * @returns The updated {@link Gift}, or `null` if the gift does not exist.
+ * @throws If the gift's current status cannot transition to `"cancelled"`.
  */
-export async function cancelGift(id: string): Promise<Gift | null> {
-  const gift = gifts.get(id);
+export async function cancelGift(
+  id: string,
+  refundStatus: RefundStatus = "not_required"
+): Promise<Gift | null> {
+  const gift = await updateGiftStatus(id, "cancelled");
   if (!gift) return null;
-  gift.status = "cancelled";
-  gift.updatedAt = new Date();
+  gift.cancelledAt = new Date();
+  gift.refundStatus = refundStatus;
   gifts.set(id, gift);
   return gift;
 }
@@ -373,4 +381,25 @@ export async function updateGiftStatusIdempotent(
 
 export async function getGiftsByStatus(status: GiftStatus): Promise<Gift[]> {
   return [...gifts.values()].filter((g) => g.status === status);
+}
+
+/**
+ * Strips free-text personal data from every gift sent by `senderId` while
+ * keeping the financial fields (amounts, status, tx hashes, phone hash) that
+ * must be retained for audit. Used by the account-erasure workflow (Issue #145).
+ *
+ * @returns The number of gifts redacted.
+ */
+export async function redactGiftsForErasedSender(senderId: string): Promise<number> {
+  let count = 0;
+  for (const gift of gifts.values()) {
+    if (gift.senderId !== senderId) continue;
+    gift.recipientName = "[redacted]";
+    gift.recipientEmail = undefined;
+    gift.message = undefined;
+    gift.mediaUrl = undefined;
+    gift.updatedAt = new Date();
+    count++;
+  }
+  return count;
 }
