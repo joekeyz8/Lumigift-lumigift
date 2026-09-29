@@ -70,11 +70,17 @@ export async function createGift(
   const id = randomUUID();
   const amountUsdc = await ngnToUsdc(input.amountNgn);
   const recipientPhoneHash = hashPhone(input.recipientPhone);
+  const paymentReference = `lumigift_${id}`;
 
   // Sanitize message content to prevent stored XSS
   const sanitizedMessage = input.message ? stripHtmlTags(input.message) : undefined;
 
-  const gift: Gift = {
+  // ── Atomically persist gift + payment reference in one DB transaction ──────
+  // This satisfies issue #55: gift row, payment reference, and initial status
+  // are written atomically. If the Paystack call below fails after this point
+  // the gift record exists as pending_payment and can be retried. If the DB
+  // write itself fails, no partial state is left.
+  const gift = await persistGiftWithPaymentRef({
     id,
     senderId,
     recipientPhoneHash,
@@ -84,11 +90,12 @@ export async function createGift(
     amountUsdc,
     message: sanitizedMessage,
     unlockAt: new Date(input.unlockAt),
-    status: "pending_payment",
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
+    provider: "paystack",
+    paymentReference,
+  });
 
+  // Mirror to in-memory Map for backward-compat with callers that still read
+  // from the Map (will be fully removed once all queries go through gift.db.ts)
   gifts.set(id, gift);
 
   // Lock the exchange rate for slippage protection (expires in 5 minutes)
@@ -108,6 +115,10 @@ export async function createGift(
       recipientIsRegistered,
     },
   });
+
+  // ── Side effects after the transaction commits ──────────────────────────────
+  // These are intentionally fire-and-forget: a failure here leaves a retryable
+  // record in the DB (gift is pending_payment) but does not corrupt gift state.
 
   // If recipient is unregistered, create an invitation and send SMS
   if (!recipientIsRegistered) {
@@ -131,14 +142,14 @@ export async function createGift(
       );
     } catch (err: unknown) {
       console.error("[gift] Failed to create/send invitation:", err);
-      // Don't block gift creation on invitation failure
+      // Don't block gift creation on invitation failure — gift is already persisted
     }
   }
 
   const payment = await initializePayment({
     email: `${senderId}@lumigift.app`, // placeholder; use real email from user record
     amountKobo: ngnToKobo(input.amountNgn),
-    reference: `lumigift_${id}`,
+    reference: paymentReference,
     callbackUrl: `${serverConfig.app.url}/api/payments/callback?giftId=${id}`,
     metadata: { giftId: id, senderId },
   });
