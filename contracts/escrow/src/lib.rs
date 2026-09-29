@@ -2144,3 +2144,188 @@ mod comprehensive_tests {
         assert!(claimed, "claimed flag must be true after successful claim");
     }
 }
+
+// ─── Cancel-after-unlock tests (#78) ─────────────────────────────────────────
+//
+// Issue #78: Test cancellation after unlock but before claim.
+//
+// Product policy (defined in docs/architecture/gift-lifecycle.md):
+//   The sender MAY cancel the escrow at any time before the recipient has
+//   claimed — including after the unlock time has passed. The contract enforces
+//   this: `cancel` checks `claimed` and `cancelled` flags but does NOT check
+//   whether the unlock time has been reached.
+//
+// Acceptance Criteria:
+//   • Behavior matches product policy (cancel succeeds after unlock, before claim).
+//   • Backend mirrors the contract result (gift status transitions to "cancelled").
+
+#[cfg(test)]
+mod cancel_after_unlock_tests {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        token::{Client as TokenClient, StellarAssetClient},
+        Env,
+    };
+
+    /// Set up an initialized escrow ready to test the post-unlock window.
+    fn setup(env: &Env, unlock_time: u64) -> (Address, Address, TokenClient, EscrowContractClient) {
+        env.mock_all_auths();
+        let sender = Address::generate(env);
+        let recipient = Address::generate(env);
+        let token_id = env.register_stellar_asset_contract(sender.clone());
+        let token = TokenClient::new(env, &token_id);
+        StellarAssetClient::new(env, &token_id).mint(&sender, &MIN_AMOUNT);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let client = EscrowContractClient::new(env, &contract_id);
+        client.initialize(&sender, &sender, &recipient, &token_id, &MIN_AMOUNT, &unlock_time);
+
+        (sender, recipient, token, client)
+    }
+
+    // ── Core: cancel succeeds in the unlocked-but-unclaimed window ────────────
+
+    /// Sender can cancel at exactly unlock_time (the window opens).
+    #[test]
+    fn test_cancel_at_exactly_unlock_time_succeeds() {
+        let env = Env::default();
+        env.ledger().with_mut(|l| l.timestamp = 0);
+        let unlock_time = MIN_LOCK_DURATION + 1_000;
+        let (sender, _recipient, token, client) = setup(&env, unlock_time);
+
+        // Advance ledger to exactly unlock_time
+        env.ledger().with_mut(|l| l.timestamp = unlock_time);
+
+        // Status is Unlocked — cancel must still succeed (no claim yet)
+        assert_eq!(client.get_status(), EscrowStatus::Unlocked);
+        client.cancel();
+
+        // Funds returned to sender
+        assert_eq!(token.balance(&sender), MIN_AMOUNT);
+        // Status is now Cancelled
+        assert_eq!(client.get_status(), EscrowStatus::Cancelled);
+    }
+
+    /// Sender can cancel well after unlock_time while claim has not been made.
+    #[test]
+    fn test_cancel_long_after_unlock_but_before_claim_succeeds() {
+        let env = Env::default();
+        env.ledger().with_mut(|l| l.timestamp = 0);
+        let unlock_time = MIN_LOCK_DURATION + 1_000;
+        let (sender, _recipient, token, client) = setup(&env, unlock_time);
+
+        // Simulate many seconds passing without a claim
+        env.ledger().with_mut(|l| l.timestamp = unlock_time + 86_400); // 1 day later
+
+        assert_eq!(client.get_status(), EscrowStatus::Unlocked);
+        client.cancel();
+
+        assert_eq!(token.balance(&sender), MIN_AMOUNT);
+        assert_eq!(client.get_status(), EscrowStatus::Cancelled);
+    }
+
+    // ── After cancel in the unlocked window, claim must fail ─────────────────
+
+    /// Once cancelled (from the unlocked window), the recipient cannot claim.
+    #[test]
+    fn test_claim_fails_after_cancel_in_unlocked_window() {
+        let env = Env::default();
+        env.ledger().with_mut(|l| l.timestamp = 0);
+        let unlock_time = MIN_LOCK_DURATION + 1_000;
+        let (_sender, _recipient, _token, client) = setup(&env, unlock_time);
+
+        env.ledger().with_mut(|l| l.timestamp = unlock_time);
+        client.cancel();
+
+        // Recipient cannot claim after sender cancelled
+        let err = client.try_claim().unwrap_err().unwrap();
+        assert_eq!(
+            err,
+            EscrowError::AlreadyCancelled,
+            "claim after cancel must return AlreadyCancelled"
+        );
+    }
+
+    // ── Race condition: cancel vs claim at the same unlock boundary ───────────
+
+    /// Claim beats cancel: claim at unlock_time, then cancel fails.
+    #[test]
+    fn test_claim_wins_over_cancel_at_unlock_boundary() {
+        let env = Env::default();
+        env.ledger().with_mut(|l| l.timestamp = 0);
+        let unlock_time = MIN_LOCK_DURATION + 1_000;
+        let (_sender, _recipient, _token, client) = setup(&env, unlock_time);
+
+        env.ledger().with_mut(|l| l.timestamp = unlock_time);
+        client.claim(); // claim wins
+
+        // Cancel now must fail with AlreadyClaimed
+        let err = client.try_cancel().unwrap_err().unwrap();
+        assert_eq!(
+            err,
+            EscrowError::AlreadyClaimed,
+            "cancel after claim must return AlreadyClaimed"
+        );
+    }
+
+    // ── Funds conservation in the unlocked-then-cancelled path ───────────────
+
+    /// Total supply is conserved: sender gets back exactly MIN_AMOUNT.
+    #[test]
+    fn test_funds_conservation_cancel_in_unlocked_window() {
+        let env = Env::default();
+        env.ledger().with_mut(|l| l.timestamp = 0);
+        let unlock_time = MIN_LOCK_DURATION + 1_000;
+        let (sender, recipient, token, client) = setup(&env, unlock_time);
+
+        env.ledger().with_mut(|l| l.timestamp = unlock_time);
+        client.cancel();
+
+        let sender_bal = token.balance(&sender);
+        let recipient_bal = token.balance(&recipient);
+        let contract_bal = token.balance(&client.address);
+
+        assert_eq!(sender_bal + recipient_bal + contract_bal, MIN_AMOUNT);
+        assert_eq!(contract_bal, 0, "contract must hold 0 after cancel");
+        assert_eq!(recipient_bal, 0, "recipient must hold 0 after cancel");
+        assert_eq!(sender_bal, MIN_AMOUNT, "sender must receive full amount");
+    }
+
+    // ── Status transitions in the unlocked window ─────────────────────────────
+
+    /// Status sequence: Locked → Unlocked → Cancelled (not Claimed).
+    #[test]
+    fn test_status_sequence_locked_unlocked_cancelled() {
+        let env = Env::default();
+        env.ledger().with_mut(|l| l.timestamp = 0);
+        let unlock_time = MIN_LOCK_DURATION + 1_000;
+        let (_sender, _recipient, _token, client) = setup(&env, unlock_time);
+
+        assert_eq!(client.get_status(), EscrowStatus::Locked);
+
+        env.ledger().with_mut(|l| l.timestamp = unlock_time);
+        assert_eq!(client.get_status(), EscrowStatus::Unlocked);
+
+        client.cancel();
+        assert_eq!(client.get_status(), EscrowStatus::Cancelled);
+    }
+
+    // ── Cancel before unlock still works (regression guard) ──────────────────
+
+    /// Cancel before unlock_time still works (existing behavior must not regress).
+    #[test]
+    fn test_cancel_before_unlock_still_works() {
+        let env = Env::default();
+        env.ledger().with_mut(|l| l.timestamp = 0);
+        let unlock_time = MIN_LOCK_DURATION + 1_000;
+        let (sender, _recipient, token, client) = setup(&env, unlock_time);
+
+        // Still Locked
+        assert_eq!(client.get_status(), EscrowStatus::Locked);
+        client.cancel();
+
+        assert_eq!(token.balance(&sender), MIN_AMOUNT);
+        assert_eq!(client.get_status(), EscrowStatus::Cancelled);
+    }
+}
