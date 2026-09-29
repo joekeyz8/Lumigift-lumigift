@@ -2329,3 +2329,184 @@ mod cancel_after_unlock_tests {
         assert_eq!(client.get_status(), EscrowStatus::Cancelled);
     }
 }
+
+// ─── Admin authority tests (#81) ──────────────────────────────────────────────
+//
+// Issue #81: Document and enforce the admin/upgrade model or remove unused
+// authority.
+//
+// Acceptance Criteria:
+//   • Upgrade permissions are authorized (admin-only).
+//   • Unauthorized upgrade tests fail.
+
+#[cfg(test)]
+mod admin_authority_tests {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, MockAuth, MockAuthInvoke},
+        token::StellarAssetClient,
+        BytesN, Env, IntoVal,
+    };
+
+    /// Set up an initialized escrow with a distinct admin, sender, and recipient.
+    fn setup(env: &Env) -> (Address, Address, Address, EscrowContractClient) {
+        env.mock_all_auths();
+        let admin = Address::generate(env);
+        let sender = Address::generate(env);
+        let recipient = Address::generate(env);
+        let token_id = env.register_stellar_asset_contract(sender.clone());
+        StellarAssetClient::new(env, &token_id).mint(&sender, &100_000_000);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let client = EscrowContractClient::new(env, &contract_id);
+        // Pass distinct admin ≠ sender so tests can verify role separation.
+        client.initialize(&admin, &sender, &recipient, &token_id, &100_000_000, &3_601);
+
+        (admin, sender, recipient, client)
+    }
+
+    /// The gift sender is a different role from admin — sender must not upgrade.
+    #[test]
+    fn test_sender_cannot_upgrade() {
+        let env = Env::default();
+        let (_admin, sender, _recipient, client) = setup(&env);
+
+        let new_wasm_hash = BytesN::from_array(&env, &[1u8; 32]);
+
+        client
+            .mock_auths(&[MockAuth {
+                address: &sender,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "upgrade",
+                    args: (new_wasm_hash.clone(),).into_val(&env),
+                    sub_invokes: &[],
+                },
+            }])
+            .try_upgrade(&new_wasm_hash)
+            .expect_err("sender must not be able to upgrade");
+    }
+
+    /// The recipient is a different role from admin — recipient must not upgrade.
+    #[test]
+    fn test_recipient_cannot_upgrade() {
+        let env = Env::default();
+        let (_admin, _sender, recipient, client) = setup(&env);
+
+        let new_wasm_hash = BytesN::from_array(&env, &[2u8; 32]);
+
+        client
+            .mock_auths(&[MockAuth {
+                address: &recipient,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "upgrade",
+                    args: (new_wasm_hash.clone(),).into_val(&env),
+                    sub_invokes: &[],
+                },
+            }])
+            .try_upgrade(&new_wasm_hash)
+            .expect_err("recipient must not be able to upgrade");
+    }
+
+    /// Upgrade on an uninitialized contract must return NotInitialized, not panic.
+    #[test]
+    fn test_upgrade_not_initialized_returns_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, EscrowContract);
+        let client = EscrowContractClient::new(&env, &contract_id);
+
+        let new_wasm_hash = BytesN::from_array(&env, &[3u8; 32]);
+
+        let err = client.try_upgrade(&new_wasm_hash).unwrap_err().unwrap();
+        assert_eq!(
+            err,
+            EscrowError::NotInitialized,
+            "upgrade on uninitialized contract must return NotInitialized"
+        );
+    }
+
+    /// Admin can upgrade — verifies the authorized path succeeds end-to-end.
+    #[test]
+    fn test_admin_can_upgrade_successfully() {
+        let env = Env::default();
+        let (admin, _sender, _recipient, client) = setup(&env);
+
+        let new_wasm_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+        // Should complete without error
+        client
+            .mock_auths(&[MockAuth {
+                address: &admin,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "upgrade",
+                    args: (new_wasm_hash.clone(),).into_val(&env),
+                    sub_invokes: &[],
+                },
+            }])
+            .upgrade(&new_wasm_hash);
+    }
+
+    /// A random third party (not admin, sender, or recipient) cannot upgrade.
+    #[test]
+    fn test_random_address_cannot_upgrade() {
+        let env = Env::default();
+        let (_admin, _sender, _recipient, client) = setup(&env);
+
+        let random = Address::generate(&env);
+        let new_wasm_hash = BytesN::from_array(&env, &[4u8; 32]);
+
+        client
+            .mock_auths(&[MockAuth {
+                address: &random,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "upgrade",
+                    args: (new_wasm_hash.clone(),).into_val(&env),
+                    sub_invokes: &[],
+                },
+            }])
+            .try_upgrade(&new_wasm_hash)
+            .expect_err("random address must not be able to upgrade");
+    }
+
+    /// Admin stored at initialization matches the address passed as first arg.
+    /// Verifies that the contract stores and uses the admin arg (not the sender).
+    #[test]
+    fn test_admin_is_stored_separately_from_sender() {
+        let env = Env::default();
+        // admin ≠ sender — verify that only admin (not sender) can upgrade
+        let (admin, sender, _recipient, client) = setup(&env);
+
+        let new_wasm_hash = BytesN::from_array(&env, &[5u8; 32]);
+
+        // Sender cannot upgrade
+        client
+            .mock_auths(&[MockAuth {
+                address: &sender,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "upgrade",
+                    args: (new_wasm_hash.clone(),).into_val(&env),
+                    sub_invokes: &[],
+                },
+            }])
+            .try_upgrade(&new_wasm_hash)
+            .expect_err("sender must not act as admin");
+
+        // Admin can upgrade
+        client
+            .mock_auths(&[MockAuth {
+                address: &admin,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "upgrade",
+                    args: (new_wasm_hash.clone(),).into_val(&env),
+                    sub_invokes: &[],
+                },
+            }])
+            .upgrade(&new_wasm_hash); // must succeed
+    }
+}
