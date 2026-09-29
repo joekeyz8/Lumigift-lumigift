@@ -15,28 +15,26 @@ output "redis_endpoint" {
   sensitive   = true
 }
 
-output "app_runner_instance_role_arn" {
-  description = "IAM Role ARN assumed by App Runner instance for secrets access"
-  value       = aws_iam_role.app_runner_instance_role.arn
+# ─── #104: Backup outputs ─────────────────────────────────────────────────────
+
+output "backup_bucket_name" {
+  description = "S3 bucket used for encrypted pg_dump backups"
+  value       = aws_s3_bucket.backups.id
 }
 
-output "secret_arns" {
-  description = "Map of AWS Secrets Manager secret ARNs for production"
-  value = {
-    DATABASE_URL              = aws_secretsmanager_secret.db_url.arn
-    REDIS_URL                 = aws_secretsmanager_secret.redis_url.arn
-    NEXTAUTH_SECRET           = aws_secretsmanager_secret.nextauth_secret.arn
-    NEXTAUTH_SECRET_PREVIOUS  = aws_secretsmanager_secret.nextauth_secret_previous.arn
-    CSRF_SECRET               = aws_secretsmanager_secret.csrf_secret.arn
-    CRON_SECRET               = aws_secretsmanager_secret.cron_secret.arn
-    STELLAR_SERVER_SECRET_KEY = aws_secretsmanager_secret.stellar_server_secret_key.arn
-    STELLAR_ESCROW_CONTRACT_ID= aws_secretsmanager_secret.stellar_escrow_contract_id.arn
-    PAYSTACK_SECRET_KEY       = aws_secretsmanager_secret.paystack_secret_key.arn
-    STRIPE_SECRET_KEY         = aws_secretsmanager_secret.stripe_secret_key.arn
-    STRIPE_WEBHOOK_SECRET     = aws_secretsmanager_secret.stripe_webhook_secret.arn
-    TERMII_API_KEY            = aws_secretsmanager_secret.termii_api_key.arn
-    CLOUDINARY_API_SECRET     = aws_secretsmanager_secret.cloudinary_api_secret.arn
-    CLOUDINARY_API_KEY        = aws_secretsmanager_secret.cloudinary_api_key.arn
-  }
+output "backup_iam_access_key_id" {
+  description = "Access key ID for the backup IAM user (store in GitHub Actions secret BACKUP_AWS_ACCESS_KEY_ID)"
+  value       = aws_iam_access_key.backup_runner.id
+  sensitive   = true
 }
 
+output "backup_iam_secret_access_key" {
+  description = "Secret access key for the backup IAM user (store in GitHub Actions secret BACKUP_AWS_SECRET_ACCESS_KEY)"
+  value       = aws_iam_access_key.backup_runner.secret
+  sensitive   = true
+}
+
+output "backup_sns_topic_arn" {
+  description = "SNS topic ARN for backup failure alerts"
+  value       = aws_sns_topic.backup_alerts.arn
+}
