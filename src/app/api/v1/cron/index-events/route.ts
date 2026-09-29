@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { indexEscrowEvents } from "@/server/services/event-indexer.service";
+import { startTimer, recordCronSuccess, recordCronFailure } from "@/lib/metrics";
 import type { ApiResponse } from "@/types";
 
 /**
@@ -41,7 +42,7 @@ export const GET = async (req: NextRequest) => {
 
   try {
     const result = await indexEscrowEvents();
-    const durationMs = Date.now() - startedAt;
+    const durationMs = elapsed();
 
     console.log("[cron/index-events] run complete", { ...result, durationMs });
 
