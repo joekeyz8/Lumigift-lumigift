@@ -1,85 +1,24 @@
-import pool from "@/lib/db";
+import { gifts, updateGiftStatus, isGiftUnlocked } from "./gift.service";
 
 /**
- * Row shape returned by the unlock query.
- */
-interface GiftRow {
-  id: string;
-  status: string;
-  unlock_at: Date;
-  contract_id: string | null;
-  sender_stellar_key: string | null;
-  recipient_phone: string | null;
-  amount_usdc: string;
-}
-
-/**
- * Unlock scheduler — finds all gifts in `"locked"` status whose `unlock_at`
- * timestamp has passed, atomically transitions each one to `"unlocked"` using
- * a `SELECT … FOR UPDATE SKIP LOCKED` advisory lock, and notifies recipients.
+ * Unlock scheduler — checks for gifts whose `unlockAt` has passed (inclusive: `now >= unlockAt`)
+ * and transitions them from `"locked"` → `"unlocked"`, then notifies recipients.
  *
- * The query is concurrent-safe: if two scheduler instances run at the same
- * time, each gift will be processed by exactly one instance. Any gift that is
- * already being processed by another connection is silently skipped (`SKIP LOCKED`).
+ * In production this is triggered by a Vercel Cron job or pg_cron
+ * at a regular interval (e.g. every minute).
  *
- * In production this is triggered by the Vercel Cron job at `/api/v1/cron/unlock`
- * every minute, or by pg_cron on the database server.
- *
+ * @param now - Reference timestamp for execution (defaults to new Date()).
  * @returns The number of gifts that were unlocked in this run.
  */
-export async function processUnlocks(): Promise<number> {
-  const now = new Date();
-  let processed = 0;
-
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
-    // Atomically claim all eligible gifts in one round-trip.
-    // SKIP LOCKED ensures concurrent scheduler runs never double-process a gift.
-    const { rows } = await client.query<GiftRow>(
-      `SELECT id, status, unlock_at, contract_id, sender_stellar_key, recipient_phone, amount_usdc
-         FROM gifts
-        WHERE status = 'locked'
-          AND unlock_at <= $1
-        ORDER BY unlock_at ASC
-          FOR UPDATE SKIP LOCKED`,
-      [now]
-    );
-
-    for (const gift of rows) {
-      try {
-        await client.query(
-          `UPDATE gifts
-              SET status = 'unlocked', updated_at = NOW()
-            WHERE id = $1
-              AND status = 'locked'`,
-          [gift.id]
-        );
-
-        processed += 1;
-        console.log("[scheduler] unlocked gift", {
-          giftId: gift.id,
-          unlockAt: gift.unlock_at,
-          processedAt: now,
-        });
-      } catch (err) {
-        // Log and continue — a single failure should not abort the whole batch.
-        console.error("[scheduler] failed to unlock gift", { giftId: gift.id, err });
-      }
+export async function processUnlocks(now: Date = new Date()): Promise<number> {
+  let unlockedCount = 0;
+  for (const gift of gifts.values()) {
+    if (gift.status === "locked" && isGiftUnlocked(gift, now)) {
+      await updateGiftStatus(gift.id, "unlocked");
+      unlockedCount++;
     }
-
-    await client.query("COMMIT");
-  } catch (err) {
-    await client.query("ROLLBACK");
-    console.error("[scheduler] processUnlocks transaction failed, rolled back", err);
-    throw err;
-  } finally {
-    client.release();
   }
-
-  console.log("[scheduler] processUnlocks complete", { processed, ranAt: now });
-  return processed;
+  return unlockedCount;
 }
 
 /**
