@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
-import { getRedisClient } from "@/lib/redis";
+import { getRedisMetrics, withRedis } from "@/lib/redis";
 import { serverConfig } from "@/server/config";
 
 /**
@@ -23,14 +23,15 @@ import { serverConfig } from "@/server/config";
  * "horizon") — not table names, IP addresses, or error messages.
  */
 
-// ── Liveness ──────────────────────────────────────────────────────────────────
+  const checks = { db, redis, horizon };
+  const redisMetrics = getRedisMetrics();
+  const degraded = Object.values(checks).some((s) => s === "error");
+  const status = degraded ? "degraded" : "ok";
 
-/**
- * Liveness probe — always returns 200 while the process is alive.
- * GET /api/health
- */
-export async function GET() {
-  return NextResponse.json({ status: "ok", timestamp: new Date().toISOString() }, { status: 200 });
+  return NextResponse.json(
+    { status, timestamp: new Date().toISOString(), checks, metrics: { redis: redisMetrics } },
+    { status: degraded ? 503 : 200 }
+  );
 }
 
 // ── Readiness helpers ─────────────────────────────────────────────────────────
@@ -46,8 +47,7 @@ async function checkDb(): Promise<"ok" | "error"> {
 
 async function checkRedis(): Promise<"ok" | "error"> {
   try {
-    const client = await getRedisClient();
-    await client.ping();
+    await withRedis("health_check", (client) => client.ping());
     return "ok";
   } catch {
     return "error";
