@@ -31,49 +31,81 @@ export const POST = withErrorHandler(
       const invitation = await validateInvitationToken(invitationToken);
       if (!invitation) {
         return NextResponse.json<ApiResponse<never>>(
-          { success: false, error: "Invalid or expired invitation" },
+          { success: false, error: "Invalid phone number" },
           { status: 400 }
         );
       }
 
-      // Verify the phone matches the invitation
-      if (invitation.recipientPhone !== phone) {
+      if (displayName.length < 2) {
         return NextResponse.json<ApiResponse<never>>(
-          { success: false, error: "Phone number does not match invitation" },
+          { success: false, error: "Name must be at least 2 characters" },
           { status: 400 }
         );
       }
 
-      invitationId = invitation.id;
-    }
+      // Check if phone is already registered
+      const { rows: existingUsers } = await pool.query(
+        "SELECT 1 FROM users WHERE phone = $1 LIMIT 1",
+        [phone]
+      );
 
-    // Create the user
-    const userId = randomUUID();
-    try {
-      await pool.query("INSERT INTO users (id, phone, display_name) VALUES ($1, $2, $3)", [
-        userId,
-        phone,
-        displayName,
-      ]);
-
-      // If there was an invitation, mark it as accepted
-      if (invitationId) {
-        await acceptInvitation(invitationId);
+      if (existingUsers.length > 0) {
+        return NextResponse.json<ApiResponse<never>>(
+          { success: false, error: "This phone number is already registered" },
+          { status: 409 }
+        );
       }
 
-      return NextResponse.json<ApiResponse<{ userId: string; phone: string }>>(
-        {
-          success: true,
-          data: { userId, phone },
-        },
-        { status: 201 }
-      );
-    } catch (error) {
-      console.error("[register] Error creating user:", error);
-      return NextResponse.json<ApiResponse<never>>(
-        { success: false, error: "Failed to create user account" },
-        { status: 500 }
-      );
-    }
-  })
+      // If invitation token is provided, validate it
+      let invitationId: string | null = null;
+      if (invitationToken) {
+        const invitation = await validateInvitationToken(invitationToken);
+        if (!invitation) {
+          return NextResponse.json<ApiResponse<never>>(
+            { success: false, error: "Invalid or expired invitation" },
+            { status: 400 }
+          );
+        }
+
+        // Verify the phone matches the invitation
+        if (invitation.recipientPhone !== phone) {
+          return NextResponse.json<ApiResponse<never>>(
+            { success: false, error: "Phone number does not match invitation" },
+            { status: 400 }
+          );
+        }
+
+        invitationId = invitation.id;
+      }
+
+      // Create the user
+      const userId = randomUUID();
+      try {
+        await pool.query("INSERT INTO users (id, phone, display_name) VALUES ($1, $2, $3)", [
+          userId,
+          phone,
+          displayName,
+        ]);
+
+        // If there was an invitation, mark it as accepted
+        if (invitationId) {
+          await acceptInvitation(invitationId);
+        }
+
+        return NextResponse.json<ApiResponse<{ userId: string; phone: string }>>(
+          {
+            success: true,
+            data: { userId, phone },
+          },
+          { status: 201 }
+        );
+      } catch (error) {
+        console.error("[register] Error creating user:", error);
+        return NextResponse.json<ApiResponse<never>>(
+          { success: false, error: "Failed to create user account" },
+          { status: 500 }
+        );
+      }
+    })
+  )
 );

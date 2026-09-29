@@ -27,7 +27,7 @@ export const POST = withErrorHandler(
     if (!validation.success) return validation.response;
     const { phone } = validation.data;
 
-    const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
+      const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
 
     try {
       // Per-phone: 3 requests per 10 minutes
@@ -63,10 +63,11 @@ export const POST = withErrorHandler(
       throw err;
     }
 
-    // Always return the same body regardless of whether the number is registered.
-    return NextResponse.json<ApiResponse<{ message: string }>>({
-      success: true,
-      data: OTP_RESPONSE,
-    });
-  })
+      // Always return the same body regardless of whether the number is registered.
+      return NextResponse.json<ApiResponse<{ message: string }>>({
+        success: true,
+        data: OTP_RESPONSE,
+      });
+    })
+  )
 );

@@ -72,74 +72,76 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
 });
 
 export const POST = withErrorHandler(
-  withCsrf(async (req: NextRequest) => {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
-      return NextResponse.json<ApiResponse<never>>(
-        { success: false, error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
+  withBodySizeLimit(64 * 1024)(
+    withCsrf(async (req: NextRequest) => {
+      const session = await getServerSession(authOptions);
+      if (!session?.user) {
+        return NextResponse.json<ApiResponse<never>>(
+          { success: false, error: "Unauthorized" },
+          { status: 401 }
+        );
+      }
 
     const validation = await validateBody(req, createGiftSchema);
     if (!validation.success) return validation.response;
     const parsed = validation;
 
-    const userId = (session.user as { id: string }).id;
-    const idempotencyKey = req.headers.get(IDEMPOTENCY_KEY_HEADER);
+      const userId = (session.user as { id: string }).id;
+      const idempotencyKey = req.headers.get(IDEMPOTENCY_KEY_HEADER);
 
-    // ── Idempotency check ─────────────────────────────────────────────────────
-    const idempotencyResult = await checkIdempotencyKey(idempotencyKey, userId, parsed.data);
+      // ── Idempotency check ─────────────────────────────────────────────────────
+      const idempotencyResult = await checkIdempotencyKey(idempotencyKey, userId, parsed.data);
 
-    if (idempotencyResult.type === "invalid") {
-      return NextResponse.json<ApiResponse<never>>(
-        {
-          success: false,
-          error: "Idempotency-Key must be a valid UUID v4",
-          code: "VALIDATION_ERROR",
-        },
-        { status: 400 }
+      if (idempotencyResult.type === "invalid") {
+        return NextResponse.json<ApiResponse<never>>(
+          {
+            success: false,
+            error: "Idempotency-Key must be a valid UUID v4",
+            code: "VALIDATION_ERROR",
+          },
+          { status: 400 }
+        );
+      }
+
+      if (idempotencyResult.type === "conflict") {
+        return NextResponse.json<ApiResponse<never>>(
+          {
+            success: false,
+            error: "Idempotency key already used with a different payload",
+            code: "IDEMPOTENCY_CONFLICT",
+          },
+          { status: 409 }
+        );
+      }
+
+      if (idempotencyResult.type === "replay") {
+        // Return the original response — gift was already created
+        return NextResponse.json(idempotencyResult.body, { status: idempotencyResult.status });
+      }
+      // ─────────────────────────────────────────────────────────────────────────
+
+      const { gift, paymentUrl } = await createGift(
+        userId,
+        parsed.data,
+        parsed.data.recipientIsRegistered
       );
-    }
 
-    if (idempotencyResult.type === "conflict") {
-      return NextResponse.json<ApiResponse<never>>(
-        {
-          success: false,
-          error: "Idempotency key already used with a different payload",
-          code: "IDEMPOTENCY_CONFLICT",
-        },
-        { status: 409 }
-      );
-    }
+      const responseBody: ApiResponse<{ gift: Gift; paymentUrl: string }> = {
+        success: true,
+        data: { gift, paymentUrl },
+      };
 
-    if (idempotencyResult.type === "replay") {
-      // Return the original response — gift was already created
-      return NextResponse.json(idempotencyResult.body, { status: idempotencyResult.status });
-    }
-    // ─────────────────────────────────────────────────────────────────────────
+      // Store the response only when an idempotency key was provided
+      if (idempotencyResult.type === "new") {
+        await storeIdempotencyResponse(
+          idempotencyResult.redisKey,
+          idempotencyResult.payloadHash,
+          201,
+          responseBody
+        );
+      }
 
-    const { gift, paymentUrl } = await createGift(
-      userId,
-      parsed.data,
-      parsed.data.recipientIsRegistered
-    );
-
-    const responseBody: ApiResponse<{ gift: Gift; paymentUrl: string }> = {
-      success: true,
-      data: { gift, paymentUrl },
-    };
-
-    // Store the response only when an idempotency key was provided
-    if (idempotencyResult.type === "new") {
-      await storeIdempotencyResponse(
-        idempotencyResult.redisKey,
-        idempotencyResult.payloadHash,
-        201,
-        responseBody
-      );
-    }
-
-    return NextResponse.json(responseBody, { status: 201 });
-  })
+      return NextResponse.json(responseBody, { status: 201 });
+    })
+  )
 );
