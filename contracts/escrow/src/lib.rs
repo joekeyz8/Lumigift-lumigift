@@ -1543,6 +1543,149 @@ mod upgrade_tests {
             .try_upgrade(&new_wasm_hash)
             .expect_err("non-admin must not be able to upgrade");
     }
+
+    // ─── Timestamp Boundary Semantics Tests ───────────────────────────────────────
+
+    /// Verify exact timestamp boundary semantics:
+    /// - At `timestamp == unlock_time - 1`: status is `Locked`, claim returns `StillLocked`.
+    /// - At `timestamp == unlock_time`: status is `Unlocked`, claim SUCCEEDS (inclusive rule).
+    /// - At `timestamp == unlock_time + 1`: status is `Unlocked`, claim SUCCEEDS.
+    #[test]
+    fn test_claim_boundary_exactly_at_unlock_time_succeeds() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let (token_id, token, token_admin) = create_token(&env, &sender);
+        token_admin.mint(&sender, &100_000_000);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let client = EscrowContractClient::new(&env, &contract_id);
+
+        let unlock_time: u64 = 10_000;
+        // Initialize at timestamp 100 (unlock_time > 100 + 3600 = 3700)
+        env.ledger().with_mut(|l| l.timestamp = 100);
+        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &unlock_time);
+
+        // 1 second BEFORE unlock_time (9_999) -> must fail with StillLocked
+        env.ledger().with_mut(|l| l.timestamp = unlock_time - 1);
+        assert_eq!(client.get_status(), EscrowStatus::Locked);
+        let err = client.try_claim().unwrap_err().unwrap();
+        assert_eq!(err, EscrowError::StillLocked);
+
+        // EXACTLY AT unlock_time (10_000) -> must transition to Unlocked and claim SUCCEEDS
+        env.ledger().with_mut(|l| l.timestamp = unlock_time);
+        assert_eq!(client.get_status(), EscrowStatus::Unlocked);
+        client.claim();
+
+        // After claim -> Claimed
+        assert_eq!(client.get_status(), EscrowStatus::Claimed);
+        assert_eq!(token.balance(&recipient), 100_000_000);
+    }
+
+    #[test]
+    fn test_claim_boundary_one_second_after_unlock_time_succeeds() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let (token_id, token, token_admin) = create_token(&env, &sender);
+        token_admin.mint(&sender, &100_000_000);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let client = EscrowContractClient::new(&env, &contract_id);
+
+        let unlock_time: u64 = 5_000;
+        env.ledger().with_mut(|l| l.timestamp = 0);
+        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &unlock_time);
+
+        // 1 second AFTER unlock_time (5_001) -> succeeds
+        env.ledger().with_mut(|l| l.timestamp = unlock_time + 1);
+        assert_eq!(client.get_status(), EscrowStatus::Unlocked);
+        client.claim();
+
+        assert_eq!(client.get_status(), EscrowStatus::Claimed);
+        assert_eq!(token.balance(&recipient), 100_000_000);
+    }
+
+    #[test]
+    fn test_initialize_boundary_min_lock_duration() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let (token_id, _, token_admin) = create_token(&env, &sender);
+        token_admin.mint(&sender, &200_000_000);
+
+        let current_ts: u64 = 1_000;
+        env.ledger().with_mut(|l| l.timestamp = current_ts);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let client = EscrowContractClient::new(&env, &contract_id);
+
+        // Exactly at current_ts + MIN_LOCK_DURATION (1000 + 3600 = 4600) -> InvalidUnlockTime (strictly > required)
+        let exact_min = current_ts + MIN_LOCK_DURATION;
+        let err = client
+            .try_initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &exact_min)
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, EscrowError::InvalidUnlockTime);
+
+        // At current_ts + MIN_LOCK_DURATION + 1 (4601) -> SUCCEEDS
+        let valid_min = current_ts + MIN_LOCK_DURATION + 1;
+        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &valid_min);
+        assert_eq!(client.get_status(), EscrowStatus::Locked);
+    }
+
+    #[test]
+    fn test_ledger_sequence_progression_across_boundary() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let (token_id, token, token_admin) = create_token(&env, &sender);
+        token_admin.mint(&sender, &100_000_000);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let client = EscrowContractClient::new(&env, &contract_id);
+
+        let unlock_time: u64 = 10_000;
+        env.ledger().with_mut(|l| {
+            l.sequence = 100;
+            l.timestamp = 0;
+        });
+
+        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &unlock_time);
+
+        // Ledger 101: 5s before boundary (9_995)
+        env.ledger().with_mut(|l| {
+            l.sequence = 101;
+            l.timestamp = 9_995;
+        });
+        assert_eq!(client.get_status(), EscrowStatus::Locked);
+        assert_eq!(client.try_claim().unwrap_err().unwrap(), EscrowError::StillLocked);
+
+        // Ledger 102: Exactly at boundary (10_000)
+        env.ledger().with_mut(|l| {
+            l.sequence = 102;
+            l.timestamp = 10_000;
+        });
+        assert_eq!(client.get_status(), EscrowStatus::Unlocked);
+        client.claim();
+        assert_eq!(token.balance(&recipient), 100_000_000);
+
+        // Ledger 103: After boundary (10_005) -> Already claimed
+        env.ledger().with_mut(|l| {
+            l.sequence = 103;
+            l.timestamp = 10_005;
+        });
+        assert_eq!(client.get_status(), EscrowStatus::Claimed);
+        assert_eq!(client.try_claim().unwrap_err().unwrap(), EscrowError::AlreadyClaimed);
+    }
 }
 
 // ─── Comprehensive unit tests (#77) ──────────────────────────────────────────
