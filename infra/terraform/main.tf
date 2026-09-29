@@ -192,6 +192,59 @@ resource "aws_elasticache_cluster" "redis" {
 
 # ─── Compute — App Runner (serverless Next.js) ────────────────────────────────
 
+resource "aws_iam_role" "app_runner_instance_role" {
+  name = "lumigift-${var.env}-apprunner-instance-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "tasks.apprunner.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = local.tags
+}
+
+resource "aws_iam_role_policy" "secrets_access" {
+  name = "lumigift-${var.env}-secrets-access"
+  role = aws_iam_role.app_runner_instance_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret"
+        ]
+        Resource = [
+          aws_secretsmanager_secret.db_url.arn,
+          aws_secretsmanager_secret.redis_url.arn,
+          aws_secretsmanager_secret.nextauth_secret.arn,
+          aws_secretsmanager_secret.nextauth_secret_previous.arn,
+          aws_secretsmanager_secret.csrf_secret.arn,
+          aws_secretsmanager_secret.cron_secret.arn,
+          aws_secretsmanager_secret.stellar_server_secret_key.arn,
+          aws_secretsmanager_secret.stellar_escrow_contract_id.arn,
+          aws_secretsmanager_secret.paystack_secret_key.arn,
+          aws_secretsmanager_secret.stripe_secret_key.arn,
+          aws_secretsmanager_secret.stripe_webhook_secret.arn,
+          aws_secretsmanager_secret.termii_api_key.arn,
+          aws_secretsmanager_secret.cloudinary_api_secret.arn,
+          aws_secretsmanager_secret.cloudinary_api_key.arn
+        ]
+      }
+    ]
+  })
+}
+
 resource "aws_apprunner_service" "app" {
   service_name = "lumigift-${var.env}"
 
@@ -202,10 +255,20 @@ resource "aws_apprunner_service" "app" {
       image_configuration {
         port = "3000"
         runtime_environment_secrets = {
-          DATABASE_URL      = aws_secretsmanager_secret.db_url.arn
-          REDIS_URL         = aws_secretsmanager_secret.redis_url.arn
-          NEXTAUTH_SECRET   = aws_secretsmanager_secret.nextauth_secret.arn
-          CRON_SECRET       = aws_secretsmanager_secret.cron_secret.arn
+          DATABASE_URL                 = aws_secretsmanager_secret.db_url.arn
+          REDIS_URL                    = aws_secretsmanager_secret.redis_url.arn
+          NEXTAUTH_SECRET              = aws_secretsmanager_secret.nextauth_secret.arn
+          NEXTAUTH_SECRET_PREVIOUS     = aws_secretsmanager_secret.nextauth_secret_previous.arn
+          CSRF_SECRET                  = aws_secretsmanager_secret.csrf_secret.arn
+          CRON_SECRET                  = aws_secretsmanager_secret.cron_secret.arn
+          STELLAR_SERVER_SECRET_KEY     = aws_secretsmanager_secret.stellar_server_secret_key.arn
+          STELLAR_ESCROW_CONTRACT_ID   = aws_secretsmanager_secret.stellar_escrow_contract_id.arn
+          PAYSTACK_SECRET_KEY          = aws_secretsmanager_secret.paystack_secret_key.arn
+          STRIPE_SECRET_KEY             = aws_secretsmanager_secret.stripe_secret_key.arn
+          STRIPE_WEBHOOK_SECRET         = aws_secretsmanager_secret.stripe_webhook_secret.arn
+          TERMII_API_KEY               = aws_secretsmanager_secret.termii_api_key.arn
+          CLOUDINARY_API_SECRET        = aws_secretsmanager_secret.cloudinary_api_secret.arn
+          CLOUDINARY_API_KEY           = aws_secretsmanager_secret.cloudinary_api_key.arn
         }
       }
     }
@@ -213,8 +276,9 @@ resource "aws_apprunner_service" "app" {
   }
 
   instance_configuration {
-    cpu    = "1024"
-    memory = "2048"
+    cpu               = "1024"
+    memory            = "2048"
+    instance_role_arn = aws_iam_role.app_runner_instance_role.arn
   }
 
   tags = local.tags
@@ -235,27 +299,91 @@ resource "aws_route53_record" "app" {
 }
 
 # ─── Secrets (AWS Secrets Manager) ───────────────────────────────────────────
-# Secrets are created empty; values are set out-of-band via the AWS console
-# or CI pipeline — never stored in Terraform state as plaintext.
+# Secrets are provisioned empty or rotated programmatically; values are injected
+# out-of-band via AWS CLI / CI secrets pipeline — never stored in Terraform state as plaintext.
 
 resource "aws_secretsmanager_secret" "db_url" {
-  name = "lumigift/${var.env}/DATABASE_URL"
-  tags = local.tags
+  name                    = "lumigift/${var.env}/DATABASE_URL"
+  recovery_window_in_days = 7
+  tags                    = local.tags
 }
 
 resource "aws_secretsmanager_secret" "redis_url" {
-  name = "lumigift/${var.env}/REDIS_URL"
-  tags = local.tags
+  name                    = "lumigift/${var.env}/REDIS_URL"
+  recovery_window_in_days = 7
+  tags                    = local.tags
 }
 
 resource "aws_secretsmanager_secret" "nextauth_secret" {
-  name = "lumigift/${var.env}/NEXTAUTH_SECRET"
-  tags = local.tags
+  name                    = "lumigift/${var.env}/NEXTAUTH_SECRET"
+  recovery_window_in_days = 7
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret" "nextauth_secret_previous" {
+  name                    = "lumigift/${var.env}/NEXTAUTH_SECRET_PREVIOUS"
+  recovery_window_in_days = 7
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret" "csrf_secret" {
+  name                    = "lumigift/${var.env}/CSRF_SECRET"
+  recovery_window_in_days = 7
+  tags                    = local.tags
 }
 
 resource "aws_secretsmanager_secret" "cron_secret" {
-  name = "lumigift/${var.env}/CRON_SECRET"
-  tags = local.tags
+  name                    = "lumigift/${var.env}/CRON_SECRET"
+  recovery_window_in_days = 7
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret" "stellar_server_secret_key" {
+  name                    = "lumigift/${var.env}/STELLAR_SERVER_SECRET_KEY"
+  recovery_window_in_days = 7
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret" "stellar_escrow_contract_id" {
+  name                    = "lumigift/${var.env}/STELLAR_ESCROW_CONTRACT_ID"
+  recovery_window_in_days = 7
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret" "paystack_secret_key" {
+  name                    = "lumigift/${var.env}/PAYSTACK_SECRET_KEY"
+  recovery_window_in_days = 7
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret" "stripe_secret_key" {
+  name                    = "lumigift/${var.env}/STRIPE_SECRET_KEY"
+  recovery_window_in_days = 7
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret" "stripe_webhook_secret" {
+  name                    = "lumigift/${var.env}/STRIPE_WEBHOOK_SECRET"
+  recovery_window_in_days = 7
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret" "termii_api_key" {
+  name                    = "lumigift/${var.env}/TERMII_API_KEY"
+  recovery_window_in_days = 7
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret" "cloudinary_api_secret" {
+  name                    = "lumigift/${var.env}/CLOUDINARY_API_SECRET"
+  recovery_window_in_days = 7
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret" "cloudinary_api_key" {
+  name                    = "lumigift/${var.env}/CLOUDINARY_API_KEY"
+  recovery_window_in_days = 7
+  tags                    = local.tags
 }
 
 # ─── Security Groups ──────────────────────────────────────────────────────────
@@ -311,3 +439,4 @@ locals {
     ManagedBy   = "terraform"
   }
 }
+
