@@ -3,6 +3,12 @@ import crypto from "crypto";
 import { serverConfig } from "@/server/config";
 import { updateGiftStatus } from "@/server/services/gift.service";
 import { getRedisClient } from "@/lib/redis";
+import {
+  startTimer,
+  recordWebhookSuccess,
+  recordWebhookFailure,
+  recordStatusTransition,
+} from "@/lib/metrics";
 
 const IDEMPOTENCY_TTL_SECONDS = 86_400; // 24 hours
 
@@ -17,10 +23,12 @@ function verifySignature(rawBody: string, signature: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
+  const elapsed = startTimer();
   const rawBody = await req.text();
   const signature = req.headers.get("x-paystack-signature") ?? "";
 
   if (!verifySignature(rawBody, signature)) {
+    recordWebhookFailure("paystack", "unknown", elapsed(), "invalid_signature");
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 
@@ -30,48 +38,39 @@ export async function POST(req: NextRequest) {
   };
   try {
     event = JSON.parse(rawBody);
-  } catch {
+  } catch (err) {
+    recordWebhookFailure("paystack", "unknown", elapsed(), "invalid_json", err);
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+  const eventType = event.event ?? "unknown";
   const { reference } = event.data;
   const redis = await getRedisClient();
   const idempotencyKey = `paystack:ref:${reference}`;
 
-  // ── Atomic SET NX (set-if-not-exists) ─────────────────────────────────────
-  // NX guarantees that exactly one concurrent request wins the lock and
-  // processes the event. Any other delivery of the same reference gets the
-  // key already set and is acknowledged without side effects.
-  //
-  // The previous two-step GET → SET had a TOCTOU race: two simultaneous
-  // deliveries could both see alreadyProcessed=false and both execute the
-  // state transition. SET NX is atomic at the Redis command level.
-  const acquired = await redis.set(idempotencyKey, "1", {
-    NX: true,
-    EX: IDEMPOTENCY_TTL_SECONDS,
-  });
-
-  if (!acquired) {
-    // Already processed (or another delivery is currently processing it)
+  // Return 200 immediately for already-processed references (idempotency)
+  const alreadyProcessed = await redis.get(idempotencyKey);
+  if (alreadyProcessed) {
+    recordWebhookSuccess("paystack", eventType, elapsed(), "duplicate_ignored");
     return NextResponse.json({ received: true });
   }
 
-  // At this point we own the idempotency slot — process the event exactly once.
   try {
-    if (event.event === "charge.success") {
+    if (eventType === "charge.success") {
       const giftId = event.data.metadata?.giftId;
       if (giftId) {
         await updateGiftStatus(giftId, "locked");
+        recordStatusTransition(giftId, "pending_payment", "locked", "webhook:paystack");
       }
     }
-  } catch (err) {
-    // Processing failed — delete the idempotency key so the next delivery
-    // (Paystack retries on non-2xx, but we returned 200 optimistically above;
-    // this path handles unexpected runtime errors so operators can debug).
-    console.error("[paystack-webhook] event processing failed", { reference, err });
-    // Do NOT delete the key here — returning 200 tells Paystack we handled it.
-    // Log the error for manual inspection instead.
-  }
 
-  return NextResponse.json({ received: true });
+    // Mark reference as processed with 24-hour TTL
+    await redis.set(idempotencyKey, "1", { EX: IDEMPOTENCY_TTL_SECONDS });
+
+    recordWebhookSuccess("paystack", eventType, elapsed(), "processed");
+    return NextResponse.json({ received: true });
+  } catch (err) {
+    recordWebhookFailure("paystack", eventType, elapsed(), "processing_error", err);
+    return NextResponse.json({ error: "Internal error" }, { status: 500 });
+  }
 }
