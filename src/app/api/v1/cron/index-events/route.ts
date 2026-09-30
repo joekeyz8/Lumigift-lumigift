@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { indexEscrowEvents } from "@/server/services/event-indexer.service";
 import { startTimer, recordCronSuccess, recordCronFailure } from "@/lib/metrics";
 import type { ApiResponse } from "@/types";
+import { isAuthorizedCronRequest } from "@/server/cron-auth";
 
 /**
  * GET /api/v1/cron/index-events
@@ -28,7 +29,7 @@ async function pingHealthcheck(suffix = "") {
 
 export const GET = async (req: NextRequest) => {
   const authHeader = req.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isAuthorizedCronRequest(authHeader)) {
     return NextResponse.json<ApiResponse<never>>(
       { success: false, error: "Unauthorized" },
       { status: 401 }

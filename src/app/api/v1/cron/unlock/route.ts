@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { processUnlocks } from "@/server/services/scheduler.service";
 import { startTimer, recordCronSuccess, recordCronFailure } from "@/lib/metrics";
 import type { ApiResponse } from "@/types";
+import { isAuthorizedCronRequest } from "@/server/cron-auth";
 
 /** Ping a dead-man's-switch URL (e.g. Healthchecks.io / BetterUptime). */
 async function pingHealthcheck(suffix = "") {
@@ -18,7 +19,7 @@ async function pingHealthcheck(suffix = "") {
 /** Called by Vercel Cron or an external scheduler every minute. */
 export const GET = async (req: NextRequest) => {
   const authHeader = req.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isAuthorizedCronRequest(authHeader)) {
     return NextResponse.json<ApiResponse<never>>(
       { success: false, error: "Unauthorized" },
       { status: 401 }

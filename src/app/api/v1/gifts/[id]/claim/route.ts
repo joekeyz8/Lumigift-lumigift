@@ -39,35 +39,32 @@ export const POST = withErrorHandler(
     // Only the intended recipient may claim. Compare the hashed phone from the
     // session against the stored recipientPhoneHash. Return 404 rather than 403
     // to avoid leaking whether a gift exists for a different user.
+    // A session without a phone cannot prove recipient identity, so it is
+    // treated exactly like a mismatch (pentest finding PT-01).
     const phone = (session.user as { phone?: string }).phone;
-    if (phone) {
-      const sessionPhoneHash = hashPhone(phone);
-      if (gift.recipientPhoneHash !== sessionPhoneHash) {
-        return NextResponse.json<ApiResponse<never>>(
-          { success: false, error: "Gift not found" },
-          { status: 404 }
-        );
-      }
+    if (!phone || gift.recipientPhoneHash !== hashPhone(phone)) {
+      return NextResponse.json<ApiResponse<never>>(
+        { success: false, error: "Gift not found" },
+        { status: 404 }
+      );
     }
     // ─────────────────────────────────────────────────────────────────────────
 
     // Check if there's an invitation for this gift and recipient
-    if (phone) {
-      const invitation = await getInvitationByPhoneAndGift(phone, giftId);
-      if (invitation) {
-        // Invitation exists for this gift and recipient
-        if (invitation.status !== "accepted") {
-          return NextResponse.json<ApiResponse<never>>(
-            {
-              success: false,
-              error: "You must complete registration via the invitation to claim this gift",
-            },
-            { status: 403 }
-          );
-        }
-        // Mark invitation as claimed
-        await claimInvitation(invitation.id);
+    const invitation = await getInvitationByPhoneAndGift(phone, giftId);
+    if (invitation) {
+      // Invitation exists for this gift and recipient
+      if (invitation.status !== "accepted") {
+        return NextResponse.json<ApiResponse<never>>(
+          {
+            success: false,
+            error: "You must complete registration via the invitation to claim this gift",
+          },
+          { status: 403 }
+        );
       }
+      // Mark invitation as claimed
+      await claimInvitation(invitation.id);
     }
 
     const { txHash } = await claimGift(gift, validation.data.recipientStellarKey);
