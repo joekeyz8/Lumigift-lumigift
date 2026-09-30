@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { processExpiries } from "@/server/services/scheduler.service";
+import { startTimer, recordCronSuccess, recordCronFailure } from "@/lib/metrics";
 import type { ApiResponse } from "@/types";
 import { isAuthorizedCronRequest } from "@/server/cron-auth";
 

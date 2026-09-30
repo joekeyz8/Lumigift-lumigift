@@ -11,6 +11,7 @@ import { sendGiftInvitation } from "@/lib/sms";
 import { stripHtmlTags } from "@/lib/sanitize";
 import { createAuditLog } from "./audit.service";
 import { sendGiftReceivedEmail } from "@/lib/email";
+import type { GiftCursorPosition } from "./gift-cursor";
 
 // ─── Exchange rate helper ─────────────────────────────────────────────────────
 import { getExchangeRate, lockExchangeRate } from "@/server/services/exchange-rate.service";
@@ -69,11 +70,17 @@ export async function createGift(
   const id = randomUUID();
   const amountUsdc = await ngnToUsdc(input.amountNgn);
   const recipientPhoneHash = hashPhone(input.recipientPhone);
+  const paymentReference = `lumigift_${id}`;
 
   // Sanitize message content to prevent stored XSS
   const sanitizedMessage = input.message ? stripHtmlTags(input.message) : undefined;
 
-  const gift: Gift = {
+  // ── Atomically persist gift + payment reference in one DB transaction ──────
+  // This satisfies issue #55: gift row, payment reference, and initial status
+  // are written atomically. If the Paystack call below fails after this point
+  // the gift record exists as pending_payment and can be retried. If the DB
+  // write itself fails, no partial state is left.
+  const gift = await persistGiftWithPaymentRef({
     id,
     senderId,
     recipientPhoneHash,
@@ -83,11 +90,12 @@ export async function createGift(
     amountUsdc,
     message: sanitizedMessage,
     unlockAt: new Date(input.unlockAt),
-    status: "pending_payment",
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
+    provider: "paystack",
+    paymentReference,
+  });
 
+  // Mirror to in-memory Map for backward-compat with callers that still read
+  // from the Map (will be fully removed once all queries go through gift.db.ts)
   gifts.set(id, gift);
 
   // Lock the exchange rate for slippage protection (expires in 5 minutes)
@@ -107,6 +115,10 @@ export async function createGift(
       recipientIsRegistered,
     },
   });
+
+  // ── Side effects after the transaction commits ──────────────────────────────
+  // These are intentionally fire-and-forget: a failure here leaves a retryable
+  // record in the DB (gift is pending_payment) but does not corrupt gift state.
 
   // If recipient is unregistered, create an invitation and send SMS
   if (!recipientIsRegistered) {
@@ -130,14 +142,14 @@ export async function createGift(
       );
     } catch (err: unknown) {
       console.error("[gift] Failed to create/send invitation:", err);
-      // Don't block gift creation on invitation failure
+      // Don't block gift creation on invitation failure — gift is already persisted
     }
   }
 
   const payment = await initializePayment({
     email: `${senderId}@lumigift.app`, // placeholder; use real email from user record
     amountKobo: ngnToKobo(input.amountNgn),
-    reference: `lumigift_${id}`,
+    reference: paymentReference,
     callbackUrl: `${serverConfig.app.url}/api/payments/callback?giftId=${id}`,
     metadata: { giftId: id, senderId },
   });
@@ -224,6 +236,12 @@ export interface GiftPage {
   nextCursor: string | null;
 }
 
+export interface GiftPageResult {
+  gifts: Gift[];
+  total: number;
+  nextCursor: GiftCursorPosition | null;
+}
+
 /** Offset-based paginated result for {@link getGiftsBySenderPage}. */
 export interface GiftPageOffset {
   data: Gift[];
@@ -238,23 +256,46 @@ export interface GiftPageOffset {
  * date descending (newest first).
  *
  * @param senderId - The authenticated user's ID.
- * @param cursor - The ID of the last gift from the previous page, or `null` for
- *   the first page.
+ * @param cursor - The snapshot and last-item position from the previous page,
+ *   or `null` for the first page.
  * @param limit - Maximum number of gifts to return per page.
  * @returns A {@link GiftPage} containing the gifts, total count, and next cursor.
  */
 export async function getGiftsBySenderPaginated(
   senderId: string,
-  cursor: string | null,
+  cursor: GiftCursorPosition | null,
   limit: number
-): Promise<GiftPage> {
+): Promise<GiftPageResult> {
+  const snapshotAt = cursor ? new Date(cursor.snapshotAt) : new Date();
   const all = [...gifts.values()]
     .filter((g) => g.senderId === senderId)
-    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    .filter((g) => g.createdAt <= snapshotAt)
+    .sort(
+      (a, b) =>
+        b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)
+    );
 
-  const startIndex = cursor ? all.findIndex((g) => g.id === cursor) + 1 : 0;
-  const page = all.slice(startIndex, startIndex + limit);
-  const nextCursor = startIndex + limit < all.length ? page[page.length - 1].id : null;
+  const remaining = cursor
+    ? all.filter((gift) => {
+        const createdAt = gift.createdAt.getTime();
+        const cursorCreatedAt = Date.parse(cursor.createdAt);
+        return (
+          createdAt < cursorCreatedAt || (createdAt === cursorCreatedAt && gift.id < cursor.id)
+        );
+      })
+    : all;
+  const safeLimit = Math.min(100, Math.max(1, Math.floor(limit)));
+  const page = remaining.slice(0, safeLimit);
+  const hasNextPage = remaining.length > safeLimit;
+  const lastGift = page[page.length - 1];
+  const nextCursor =
+    hasNextPage && lastGift
+      ? {
+          snapshotAt: snapshotAt.toISOString(),
+          createdAt: lastGift.createdAt.toISOString(),
+          id: lastGift.id,
+        }
+      : null;
 
   return { gifts: page, total: all.length, nextCursor };
 }
@@ -384,22 +425,25 @@ export async function getGiftsByStatus(status: GiftStatus): Promise<Gift[]> {
 }
 
 /**
- * Strips free-text personal data from every gift sent by `senderId` while
- * keeping the financial fields (amounts, status, tx hashes, phone hash) that
- * must be retained for audit. Used by the account-erasure workflow (Issue #145).
+ * Evaluates whether a gift's unlock time has been reached using the canonical inclusive rule.
  *
- * @returns The number of gifts redacted.
+ * Boundary semantics (strictly aligned with Soroban contract `contracts/escrow/src/lib.rs`):
+ * - `now < unlockAt`:  Locked (`false`)
+ * - `now >= unlockAt`: Unlocked (`true`) — a claim is valid exactly at `unlockAt`.
+ *
+ * On-chain Soroban contract logic:
+ *   `if env.ledger().timestamp() < unlock_time { return Err(EscrowError::StillLocked); }`
+ *
+ * @param gift - An object containing the `unlockAt` date (or date string/timestamp).
+ * @param now  - Reference date for evaluation (defaults to current system time).
+ * @returns `true` if `now >= unlockAt` (inclusive), `false` otherwise.
  */
-export async function redactGiftsForErasedSender(senderId: string): Promise<number> {
-  let count = 0;
-  for (const gift of gifts.values()) {
-    if (gift.senderId !== senderId) continue;
-    gift.recipientName = "[redacted]";
-    gift.recipientEmail = undefined;
-    gift.message = undefined;
-    gift.mediaUrl = undefined;
-    gift.updatedAt = new Date();
-    count++;
-  }
-  return count;
+export function isGiftUnlocked(
+  gift: { unlockAt: Date | string | number },
+  now: Date | number = new Date()
+): boolean {
+  const unlockMs = new Date(gift.unlockAt).getTime();
+  const nowMs = typeof now === "number" ? now : now.getTime();
+  return nowMs >= unlockMs;
 }
+

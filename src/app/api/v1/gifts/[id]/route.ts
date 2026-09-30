@@ -77,12 +77,35 @@ export const DELETE = withErrorHandler(
     // 404 rather than 403 so non-senders can't distinguish other people's gifts
     if (gift.senderId !== userId) {
       return NextResponse.json<ApiResponse<never>>(
-        { success: false, error: "Gift not found" },
-        { status: 404 }
+        { success: false, error: "Forbidden" },
+        { status: 403 }
       );
     }
 
-    const cancelled = await cancelGiftForSender(gift);
+    // Cancellable statuses mirror the on-chain contract behaviour:
+    //   - pending_payment: NGN received but USDC not yet locked
+    //   - funded: USDC funding in progress, contract not yet initialised
+    //   - locked: gift is locked on-chain, unlock time not reached
+    //   - unlocked: unlock time has passed but recipient has NOT yet claimed
+    //
+    // The smart contract allows cancel() in both the Locked and Unlocked states.
+    // The backend must mirror this so that senders can reclaim funds from the
+    // unclaimed-but-unlocked window (issue #78).
+    //
+    // Terminal statuses (claimed, cancelled, expired) cannot be cancelled.
+    const cancellableStatuses = new Set(["pending_payment", "funded", "locked", "unlocked"]);
+    if (!cancellableStatuses.has(gift.status)) {
+      return NextResponse.json<ApiResponse<never>>(
+        { success: false, error: "Gift cannot be cancelled in its current state" },
+        { status: 409 }
+      );
+    }
+
+    // Trigger Paystack refund (reference convention matches gift creation)
+    const paystackRef = `lumigift_${gift.id}`;
+    await refundPayment(paystackRef);
+
+    const cancelled = await cancelGift(gift.id);
 
     return NextResponse.json<ApiResponse<Gift>>({
       success: true,
