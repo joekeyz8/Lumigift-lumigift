@@ -80,7 +80,7 @@
     "react-hook-form": "^7.87.0",
     "redis": "^5.12.1",
     "resend": "^6.26.0",
-    "stripe": "^22.1.1",
+    "stripe": "^22.6.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {
