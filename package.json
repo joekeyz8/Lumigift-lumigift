@@ -121,7 +121,7 @@
     "jest-environment-jsdom": "^30.5.2",
     "license-checker": "25.0.1",
     "lint-staged": "^17.6.0",
-    "prettier": "^3.9.6",
+    "prettier": "^3.9.10",
     "react-dom": "^19.3.1",
     "ts-node": "^10.9.2",
     "typedoc": "^0.28.20",
