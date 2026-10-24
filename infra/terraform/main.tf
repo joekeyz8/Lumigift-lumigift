@@ -12,14 +12,17 @@ terraform {
     }
   }
 
-  # Remote state — store in S3 + DynamoDB lock table
-  # Replace bucket/table names before first apply
+  # Remote state — store in S3 + DynamoDB lock table + KMS encryption at rest
+  # Replace bucket/table names before first apply.
+  # var.tf_state_kms_key_id must be a pre-created KMS key ID (bootstrapped before
+  # the first `terraform init`). Set it via TF_VAR_tf_state_kms_key_id env var.
   backend "s3" {
     bucket         = "lumigift-terraform-state"
     key            = "prod/terraform.tfstate"
     region         = "us-east-1"
     dynamodb_table = "lumigift-terraform-locks"
     encrypt        = true
+    kms_key_id     = var.tf_state_kms_key_id
   }
 }
 
@@ -479,6 +482,167 @@ resource "aws_security_group" "app" {
   }
 
   tags = local.tags
+}
+
+# ─── KMS key for Terraform state encryption (SSE-KMS) ────────────────────────
+# This key encrypts the Terraform state file at rest in S3.
+# The key must be created before the first `terraform init` by bootstrapping
+# manually or via a separate bootstrap module. Once created, pass the key ID
+# via TF_VAR_tf_state_kms_key_id so the backend block can reference it.
+
+resource "aws_kms_key" "terraform_state" {
+  description             = "KMS key for Terraform state encryption"
+  enable_key_rotation     = true
+  deletion_window_in_days = 30
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "EnableRootAccess"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+        Action   = "kms:*"
+        Resource = "*"
+      },
+      {
+        Sid    = "AllowS3StateEncryption"
+        Effect = "Allow"
+        Principal = {
+          Service = "s3.amazonaws.com"
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "AllowGitHubActionsOIDCRole"
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.github_actions_terraform.arn
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = merge(local.tags, {
+    Name    = "lumigift-terraform-state-key"
+    Purpose = "terraform-state-encryption"
+  })
+}
+
+resource "aws_kms_alias" "terraform_state" {
+  name          = "alias/lumigift-terraform-state"
+  target_key_id = aws_kms_key.terraform_state.key_id
+}
+
+# ─── GitHub Actions OIDC — no long-lived AWS credentials needed ───────────────
+# GitHub Actions authenticates via OIDC, exchanging a short-lived JWT for
+# temporary AWS credentials. This eliminates the need to store
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in GitHub Secrets.
+#
+# Reference: https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services
+
+data "aws_caller_identity" "current" {}
+
+resource "aws_iam_openid_connect_provider" "github_actions" {
+  url = "https://token.actions.githubusercontent.com"
+
+  client_id_list = ["sts.amazonaws.com"]
+
+  # GitHub's OIDC thumbprint — stable SHA-1 of the leaf certificate for
+  # token.actions.githubusercontent.com as published by GitHub:
+  # https://github.blog/changelog/2023-06-27-github-actions-oidc-integration-with-aws-supports-thumbprint-not-required/
+  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
+
+  tags = merge(local.tags, {
+    Name = "github-actions-oidc"
+  })
+}
+
+resource "aws_iam_role" "github_actions_terraform" {
+  name        = "github-actions-terraform-${var.env}"
+  description = "Assumed by GitHub Actions via OIDC to run Terraform plans and applies"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "GitHubActionsOIDC"
+        Effect = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.github_actions.arn
+        }
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+          }
+          StringLike = {
+            "token.actions.githubusercontent.com:sub" = "repo:${var.github_org}/${var.github_repo}:*"
+          }
+        }
+      }
+    ]
+  })
+
+  tags = merge(local.tags, {
+    Name    = "github-actions-terraform"
+    Purpose = "ci-cd-oidc"
+  })
+}
+
+# Scoped inline policy — only the permissions needed for Terraform remote state
+resource "aws_iam_role_policy" "github_actions_terraform_state" {
+  name = "terraform-remote-state-access-${var.env}"
+  role = aws_iam_role.github_actions_terraform.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "TerraformStateS3"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          "arn:aws:s3:::lumigift-terraform-state",
+          "arn:aws:s3:::lumigift-terraform-state/*"
+        ]
+      },
+      {
+        Sid    = "TerraformStateDynamoDB"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:DeleteItem"
+        ]
+        Resource = "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/lumigift-terraform-locks"
+      },
+      {
+        Sid    = "TerraformStateKMS"
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey"
+        ]
+        Resource = aws_kms_key.terraform_state.arn
+      }
+    ]
+  })
 }
 
 # ─── Locals ───────────────────────────────────────────────────────────────────

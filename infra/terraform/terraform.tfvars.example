@@ -1,6 +1,21 @@
-# Copy to terraform.tfvars and fill in real values.
+# Backend configuration - set these before running terraform init
+# Copy this file to terraform.tfvars and fill in real values.
 # Never commit terraform.tfvars — it is gitignored.
 
+# ─── Backend / Remote State ───────────────────────────────────────────────────
+# The KMS key must be bootstrapped (created manually or via a separate
+# bootstrap module) before running `terraform init` with the S3 backend.
+# Once created, copy the key ID here or export it as an environment variable:
+#   export TF_VAR_tf_state_kms_key_id="<your-kms-key-id>"
+tf_state_kms_key_id = "<your-kms-key-id>"
+
+# ─── GitHub OIDC ──────────────────────────────────────────────────────────────
+# These values scope the IAM trust policy so only workflows from this specific
+# repository can assume the github-actions-terraform role via OIDC.
+github_org  = "joekeyz8"
+github_repo = "Lumigift-lumigift"
+
+# ─── Core Infrastructure ──────────────────────────────────────────────────────
 aws_region         = "us-east-1"
 env                = "prod"
 vpc_id             = "vpc-xxxxxxxxxxxxxxxxx"
