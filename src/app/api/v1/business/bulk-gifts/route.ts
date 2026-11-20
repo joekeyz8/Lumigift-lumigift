@@ -11,6 +11,7 @@ import { authOptions } from "@/lib/auth";
 import { withAuth, withErrorHandler, AppError, ERROR_CODES } from "@/server/middleware";
 import {
   assertBusinessAccount,
+  batchInitializeGifts,
   createBulkGiftOrder,
   parseRecipientsCsv,
 } from "@/server/services/business.service";
@@ -41,10 +42,24 @@ export const POST = withErrorHandler(
     }
 
     const { order, paymentUrl } = await createBulkGiftOrder(userId, items);
+
+    // Once payment is confirmed, initialize escrow instances in batches of up to
+    // 20 gifts per Stellar transaction (factory pattern, atomic per batch).
+    let batches: Awaited<ReturnType<typeof batchInitializeGifts>> | undefined;
+    if (order.status === "paid") {
+      batches = await batchInitializeGifts(order.id, items);
+    }
+
     return NextResponse.json(
       {
         success: true,
-        data: { orderId: order.id, totalNgn: order.totalNgn, recipients: items.length, paymentUrl },
+        data: {
+          orderId: order.id,
+          totalNgn: order.totalNgn,
+          recipients: items.length,
+          paymentUrl,
+          ...(batches ? { batches } : {}),
+        },
       },
       { status: 201 }
     );

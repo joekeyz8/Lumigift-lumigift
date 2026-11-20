@@ -194,6 +194,48 @@ This will deploy a LIVE contract with REAL funds at stake.
     console.log(`✅ Contract deployed: ${contractId}`);
   }
 
+  // ─── Step 1b: Set on-chain network key (#538) ────────────────────────────────
+  // The contract validates token addresses against the active network, so the
+  // `network` storage key must match the deployment target before use.
+  const contractNetwork = isMainnet ? "mainnet" : "testnet";
+
+  if (!isJsonOutput) {
+    console.log(`\n🌐 Setting contract network to "${contractNetwork}"…`);
+  }
+
+  const setNetworkResult = spawnSync(
+    "stellar",
+    [
+      "contract",
+      "invoke",
+      "--id",
+      contractId,
+      "--source",
+      secretKey,
+      "--rpc-url",
+      rpcUrl,
+      "--network-passphrase",
+      networkPassphrase,
+      "--",
+      "set_network",
+      "--network",
+      contractNetwork,
+    ],
+    { encoding: "utf-8", shell: false }
+  );
+
+  if (setNetworkResult.error || setNetworkResult.status !== 0) {
+    console.error(
+      "❌ Failed to set contract network:",
+      setNetworkResult.stderr || setNetworkResult.error?.message
+    );
+    process.exit(1);
+  }
+
+  if (!isJsonOutput) {
+    console.log(`✅ Contract network set to "${contractNetwork}".`);
+  }
+
   // ─── Step 2: Verify ───────────────────────────────────────────────────────────
   if (!isJsonOutput) {
     console.log("\n🔍 Verifying deployment via get_state…");

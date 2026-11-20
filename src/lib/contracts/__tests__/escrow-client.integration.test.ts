@@ -30,6 +30,7 @@ import {
   CURSOR_GENESIS,
   type FetchEventsResult,
 } from "@/lib/contracts/escrow-events";
+import { EventIndexerService } from "@/lib/contracts/event-indexer.service";
 
 // ─── Stellar SDK mock ─────────────────────────────────────────────────────────
 // We mock the stellar-sdk at the module level so EscrowClient never dials the
@@ -559,5 +560,137 @@ describe("fetchEscrowEvents — Issue #121", () => {
     expect(result.events[0].type).toBe("initialized");
     expect(result.events[1].type).toBe("claimed");
     expect(result.latestCursor).toBe("0000000010-0000000002");
+  });
+});
+
+// ─── Live testnet integration (Issue #540) ────────────────────────────────────
+//
+// This suite runs against the real Stellar testnet. It is skipped unless the
+// required environment variables are present, so local runs and PRs without
+// secrets are unaffected. In CI the step is marked non-blocking but results are
+// reported (see .github/workflows).
+//
+// Required env:
+//   TESTNET_RPC_URL          e.g. https://soroban-testnet.stellar.org
+//   TESTNET_NETWORK_PASSPHRASE  e.g. "Test SDF Network ; September 2015"
+//   TESTNET_ESCROW_CONTRACT_ID  deployed escrow contract id (C...)
+//   TESTNET_USDC_TOKEN_ID       USDC token contract id (C...)
+// Optional:
+//   TESTNET_FRIENDBOT_URL    defaults to https://friendbot.stellar.org
+
+const TESTNET_RPC_URL = process.env.TESTNET_RPC_URL;
+const TESTNET_PASSPHRASE = process.env.TESTNET_NETWORK_PASSPHRASE;
+const TESTNET_CONTRACT_ID = process.env.TESTNET_ESCROW_CONTRACT_ID;
+const TESTNET_USDC_TOKEN_ID = process.env.TESTNET_USDC_TOKEN_ID;
+const FRIENDBOT_URL = process.env.TESTNET_FRIENDBOT_URL ?? "https://friendbot.stellar.org";
+
+const hasTestnetSecrets =
+  Boolean(TESTNET_RPC_URL) &&
+  Boolean(TESTNET_PASSPHRASE) &&
+  Boolean(TESTNET_CONTRACT_ID) &&
+  Boolean(TESTNET_USDC_TOKEN_ID);
+
+const describeTestnet = hasTestnetSecrets ? describe : describe.skip;
+
+describeTestnet("EscrowClient — live testnet integration (Issue #540)", () => {
+  // Generous timeout: friendbot funding + ledger close + event indexing.
+  jest.setTimeout(180_000);
+
+  let keypair: import("@stellar/stellar-sdk").Keypair;
+  let client: EscrowClient;
+  let indexer: EventIndexerService;
+
+  beforeAll(async () => {
+    // Use the real SDK here — the module mock above only affects the mocked
+    // suites. We re-require the actual implementation for live calls.
+    const sdk = jest.requireActual("@stellar/stellar-sdk");
+    keypair = sdk.Keypair.random();
+
+    // Fund the fresh account via testnet friendbot.
+    const fundRes = await fetch(
+      `${FRIENDBOT_URL}?addr=${encodeURIComponent(keypair.publicKey())}`
+    );
+    if (!fundRes.ok) {
+      throw new Error(
+        `Friendbot funding failed for ${keypair.publicKey()}: ${fundRes.status} ${fundRes.statusText}`
+      );
+    }
+
+    client = new EscrowClient({
+      rpcUrl: TESTNET_RPC_URL!,
+      networkPassphrase: TESTNET_PASSPHRASE!,
+      contractId: TESTNET_CONTRACT_ID!,
+      sourcePublicKey: keypair.publicKey(),
+    });
+
+    indexer = new EventIndexerService({
+      rpcUrl: TESTNET_RPC_URL!,
+      contractId: TESTNET_CONTRACT_ID!,
+    });
+  });
+
+  it("deploys, executes lifecycle, and indexes all emitted events", async () => {
+    const recipient = keypair.publicKey();
+    const amount = BigInt(1_000_000); // 0.1 USDC
+    const unlockTime = BigInt(Math.floor(Date.now() / 1000) + 60);
+
+    // ── initialize ──────────────────────────────────────────────────────────
+    const initXdr = await client.buildInitialize(
+      keypair.publicKey(),
+      recipient,
+      TESTNET_USDC_TOKEN_ID!,
+      amount,
+      unlockTime
+    );
+    const initHash = await client.submitTransaction(initXdr);
+    expect(initHash).toMatch(/^[0-9a-f]{64}$/);
+
+    // ── batch_initialize (second escrow slot) ───────────────────────────────
+    // Exercises the batch entrypoint so the indexer sees a second initialized
+    // event. Skipped gracefully if the deployed contract lacks the method.
+    try {
+      const batchXdr = await client.buildBatchInitialize([
+        {
+          sender: keypair.publicKey(),
+          recipient,
+          token: TESTNET_USDC_TOKEN_ID!,
+          amount,
+          unlockTime,
+        },
+      ]);
+      const batchHash = await client.submitTransaction(batchXdr);
+      expect(batchHash).toMatch(/^[0-9a-f]{64}$/);
+    } catch (err) {
+      // Non-fatal: contract version may not expose batch_initialize yet.
+      // eslint-disable-next-line no-console
+      console.warn("batch_initialize skipped:", (err as Error).message);
+    }
+
+    // ── claim ───────────────────────────────────────────────────────────────
+    const claimXdr = await client.buildClaim();
+    const claimHash = await client.submitTransaction(claimXdr);
+    expect(claimHash).toMatch(/^[0-9a-f]{64}$/);
+
+    // ── cancel with reason code ─────────────────────────────────────────────
+    const cancelXdr = await client.buildCancel({ reasonCode: 1 });
+    const cancelHash = await client.submitTransaction(cancelXdr);
+    expect(cancelHash).toMatch(/^[0-9a-f]{64}$/);
+
+    // ── index events via event-indexer.service.ts ───────────────────────────
+    const indexed = await indexer.indexFromCursor(CURSOR_GENESIS);
+    const types = indexed.events.map((e) => e.type);
+
+    expect(types).toContain("initialized");
+    expect(types).toContain("claimed");
+    expect(types).toContain("cancelled");
+
+    const cancelled = indexed.events.find((e) => e.type === "cancelled");
+    expect(cancelled).toBeDefined();
+    if (cancelled && cancelled.type === "cancelled") {
+      expect(cancelled.reasonCode).toBe(1);
+    }
+
+    // Cursor must advance past genesis after indexing.
+    expect(indexed.latestCursor).not.toBe(CURSOR_GENESIS);
   });
 });

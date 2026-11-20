@@ -196,7 +196,9 @@ async function applyEvent(event: EscrowEvent): Promise<EventOutcome> {
             outcome = "skipped";
           } else {
             await updateGiftStatusIdempotent(gift.id, "cancelled");
-            console.log(`[event-indexer] cancelled → cancelled  gift=${gift.id} tx=${event.txHash}`);
+            console.log(
+              `[event-indexer] cancelled → cancelled  gift=${gift.id} tx=${event.txHash} reason=${event.reason}`
+            );
             outcome = "applied";
           }
           break;
@@ -286,6 +288,7 @@ function buildPayload(event: EscrowEvent): Record<string, unknown> {
         type: event.type,
         sender: event.sender,
         amount: event.amount.toString(),
+        reason: event.reason,
       };
   }
 }

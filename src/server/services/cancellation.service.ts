@@ -28,6 +28,41 @@ import type { Gift, GiftStatus, RefundStatus } from "@/types";
 
 export const SUPPORT_URL = "/help#cancellation-policy";
 
+/**
+ * On-chain cancellation reason codes (Issue #543).
+ *
+ * These mirror the `reason: u32` argument of the escrow contract's `cancel`
+ * entry point (contracts/escrow/src/lib.rs) and are stored on-chain and
+ * emitted in the `GiftCancelled` event so analytics and dispute resolution do
+ * not have to rely on the off-chain database.
+ */
+export const CancelReason = {
+  /** The sender explicitly asked to cancel the gift. */
+  SenderRequested: 1,
+  /** The gift passed its expiry window and is being refunded. */
+  Expired: 2,
+  /** An administrator cancelled the gift. */
+  Admin: 3,
+} as const;
+
+export type CancelReasonCode = (typeof CancelReason)[keyof typeof CancelReason];
+
+/** Who initiated the cancellation — mapped to an on-chain {@link CancelReason}. */
+export type CancelInitiator = "sender" | "expiry" | "admin";
+
+/** Maps a cancellation initiator onto its on-chain reason code. */
+export function toCancelReason(initiator: CancelInitiator): CancelReasonCode {
+  switch (initiator) {
+    case "expiry":
+      return CancelReason.Expired;
+    case "admin":
+      return CancelReason.Admin;
+    case "sender":
+    default:
+      return CancelReason.SenderRequested;
+  }
+}
+
 /** Statuses from which the sender may cancel. */
 export const CANCELLABLE_STATUSES: ReadonlySet<GiftStatus> = new Set<GiftStatus>([
   "draft",
@@ -117,10 +152,15 @@ export function mapProviderRefundStatus(status: string): RefundStatus {
  * throws, the gift stays active so the sender can retry or contact support
  * instead of ending up cancelled with no refund in flight.
  *
+ * @param initiator Who is cancelling — defaults to the sender. Determines the
+ *   on-chain reason code passed to the escrow contract's `cancel(reason)`.
  * @throws {@link AppError} `GIFT_NOT_CANCELLABLE` (409) when ineligible.
  * @throws {@link AppError} `REFUND_FAILED` (502) when the provider rejects the refund request.
  */
-export async function cancelGiftForSender(gift: Gift): Promise<Gift> {
+export async function cancelGiftForSender(
+  gift: Gift,
+  initiator: CancelInitiator = "sender"
+): Promise<Gift> {
   const eligibility = getCancellationEligibility(gift);
   if (!eligibility.eligible) {
     throw new AppError("GIFT_NOT_CANCELLABLE", eligibility.reason!, 409);
@@ -142,7 +182,7 @@ export async function cancelGiftForSender(gift: Gift): Promise<Gift> {
     }
   }
 
-  const cancelled = await cancelGift(gift.id, refundStatus);
+  const cancelled = await cancelGift(gift.id, refundStatus, toCancelReason(initiator));
   if (!cancelled) throw new AppError("GIFT_NOT_FOUND", "Gift not found", 404);
   return cancelled;
 }

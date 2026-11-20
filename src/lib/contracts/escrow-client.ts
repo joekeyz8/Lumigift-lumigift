@@ -35,6 +35,12 @@ export enum EscrowError {
   InvalidUnlockTime = 8,
   /** The supplied token address is not an allowed USDC contract for this network. */
   InvalidToken = 9,
+  /** A `batch_initialize` call exceeded the maximum of 20 gifts. */
+  BatchTooLarge = 10,
+  /** A `batch_initialize` call was made with an empty gift vector. */
+  EmptyBatch = 11,
+  /** The supplied cancellation reason code is not a defined `CancelReason`. */
+  InvalidCancelReason = 12,
 }
 
 export class EscrowContractError extends Error {
@@ -69,6 +75,47 @@ export interface EscrowState {
   amount: bigint; // stroops (7 decimal places)
   unlockTime: bigint; // Unix timestamp (seconds)
   claimed: boolean;
+}
+
+// ─── Network ──────────────────────────────────────────────────────────────────
+
+/**
+ * Active network the contract was deployed against, mirroring the `Network`
+ * enum in the Soroban contract. Token validation only accepts the USDC
+ * contract address corresponding to this network.
+ */
+export enum Network {
+  Mainnet = 0,
+  Testnet = 1,
+}
+
+// ─── Cancellation reasons ─────────────────────────────────────────────────────
+
+/**
+ * On-chain cancellation reason codes, mirroring the `CancelReason` enum in the
+ * Soroban contract. Stored in contract storage and emitted in `GiftCancelled`.
+ */
+export enum CancelReason {
+  /** The sender explicitly requested cancellation (code 1). */
+  SenderRequested = 1,
+  /** The gift expired and was cancelled (code 2). */
+  Expired = 2,
+  /** An administrator cancelled the gift (code 3). */
+  Admin = 3,
+}
+
+// ─── Batch initialization ─────────────────────────────────────────────────────
+
+/** Maximum number of gifts accepted by a single `batch_initialize` call. */
+export const MAX_BATCH_SIZE = 20;
+
+/** Parameters for a single gift in a `batch_initialize` call. */
+export interface GiftParams {
+  sender: string; // Stellar public key (G…)
+  recipient: string; // Stellar public key (G…)
+  token: string; // USDC contract address (C…)
+  amount: bigint; // stroops (i128)
+  unlockTime: bigint; // Unix timestamp (u64)
 }
 
 // ─── Client options ───────────────────────────────────────────────────────────
@@ -142,6 +189,104 @@ export class EscrowClient {
     return SorobanRpc.assembleTransaction(tx, simResult).build().toXDR();
   }
 
+  // ── batch_initialize ────────────────────────────────────────────────────────
+
+  /**
+   * Builds a single `batch_initialize` transaction envelope that atomically
+   * initializes up to {@link MAX_BATCH_SIZE} escrow instances.
+   *
+   * The batch size is validated client-side before any RPC call is made; the
+   * contract enforces the same limit on-chain (`BatchTooLarge` / `EmptyBatch`).
+   *
+   * @param gifts - Gift parameters to initialize (1–20 items)
+   */
+  async batchInitialize(gifts: GiftParams[]): Promise<string> {
+    if (gifts.length === 0) {
+      throw new EscrowContractError(EscrowError.EmptyBatch);
+    }
+    if (gifts.length > MAX_BATCH_SIZE) {
+      throw new EscrowContractError(EscrowError.BatchTooLarge);
+    }
+
+    const account = await this.rpc.getAccount(this.opts.sourcePublicKey);
+
+    const giftsScVal = xdr.ScVal.scvVec(
+      gifts.map((gift) =>
+        xdr.ScVal.scvMap([
+          new xdr.ScMapEntry({
+            key: nativeToScVal("sender", { type: "symbol" }),
+            val: new Address(gift.sender).toScVal(),
+          }),
+          new xdr.ScMapEntry({
+            key: nativeToScVal("recipient", { type: "symbol" }),
+            val: new Address(gift.recipient).toScVal(),
+          }),
+          new xdr.ScMapEntry({
+            key: nativeToScVal("token", { type: "symbol" }),
+            val: new Address(gift.token).toScVal(),
+          }),
+          new xdr.ScMapEntry({
+            key: nativeToScVal("amount", { type: "symbol" }),
+            val: nativeToScVal(gift.amount, { type: "i128" }),
+          }),
+          new xdr.ScMapEntry({
+            key: nativeToScVal("unlock_time", { type: "symbol" }),
+            val: nativeToScVal(gift.unlockTime, { type: "u64" }),
+          }),
+        ])
+      )
+    );
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.opts.networkPassphrase,
+    })
+      .addOperation(this.contract.call("batch_initialize", giftsScVal))
+      .setTimeout(30)
+      .build();
+
+    const simResult = await this.rpc.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(simResult)) {
+      throw parseContractError(simResult.error);
+    }
+
+    return SorobanRpc.assembleTransaction(tx, simResult).build().toXDR();
+  }
+
+  // ── cancel ───────────────────────────────────────────────────────────────────
+
+  /**
+   * Builds a `cancel` transaction envelope ready to be signed and submitted.
+   *
+   * @param reason - On-chain cancellation reason code (see {@link CancelReason})
+   */
+  async buildCancel(reason: CancelReason): Promise<string> {
+    if (
+      reason !== CancelReason.SenderRequested &&
+      reason !== CancelReason.Expired &&
+      reason !== CancelReason.Admin
+    ) {
+      throw new EscrowContractError(EscrowError.InvalidCancelReason);
+    }
+
+    const account = await this.rpc.getAccount(this.opts.sourcePublicKey);
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.opts.networkPassphrase,
+    })
+      .addOperation(this.contract.call("cancel", nativeToScVal(reason, { type: "u32" })))
+      .setTimeout(30)
+      .build();
+
+    const simResult = await this.rpc.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(simResult)) {
+      throw parseContractError(simResult.error);
+    }
+
+    return SorobanRpc.assembleTransaction(tx, simResult).build().toXDR();
+  }
+
   // ── claim ────────────────────────────────────────────────────────────────────
 
   /**
@@ -164,6 +309,37 @@ export class EscrowClient {
     }
 
     return SorobanRpc.assembleTransaction(tx, simResult).build().toXDR();
+  }
+
+  // ── get_network ──────────────────────────────────────────────────────────────
+
+  /**
+   * Simulates `get_network` and returns the network the contract was deployed
+   * against. Read-only — no transaction is submitted.
+   */
+  async getNetwork(): Promise<Network> {
+    const account = await this.rpc.getAccount(this.opts.sourcePublicKey);
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.opts.networkPassphrase,
+    })
+      .addOperation(this.contract.call("get_network"))
+      .setTimeout(30)
+      .build();
+
+    const simResult = await this.rpc.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(simResult)) {
+      throw parseContractError(simResult.error);
+    }
+
+    const returnVal = (simResult as SorobanRpc.Api.SimulateTransactionSuccessResponse).result
+      ?.retval;
+    if (!returnVal) {
+      throw new Error("get_network simulation returned no value");
+    }
+
+    return decodeGetNetworkResult(returnVal);
   }
 
   // ── get_state ────────────────────────────────────────────────────────────────
@@ -289,6 +465,17 @@ function decodeGetStateResult(val: xdr.ScVal): EscrowState {
     unlockTime: BigInt(scValToNative(unlockTimeVal) as number | bigint),
     claimed: scValToNative(claimedVal) as boolean,
   };
+}
+
+function decodeGetNetworkResult(val: xdr.ScVal): Network {
+  // get_network returns a Network enum — Soroban encodes it as a u32 ScVal.
+  const native = scValToNative(val) as number;
+  switch (native) {
+    case 0: return Network.Mainnet;
+    case 1: return Network.Testnet;
+    default:
+      throw new Error(`Unknown Network value: ${native}`);
+  }
 }
 
 function decodeGetStatusResult(val: xdr.ScVal): EscrowStatus {

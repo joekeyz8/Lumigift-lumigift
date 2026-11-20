@@ -36,17 +36,26 @@
  * | 1     | I128         | amount transferred in USDC stroops      |
  *
  * ### `cancelled`
- * Emitted by `cancel()` — sender cancelled, funds returned (terminal).
+ * Emitted by `cancel(reason: u32)` — sender cancelled, funds returned (terminal).
  *
  * ```
  * topics: ["cancelled"]
- * data:   ScVec [sender: ScAddress, amount: I128]
+ * data:   ScVec [sender: ScAddress, amount: I128, reason: U32]
  * ```
  *
  * | Index | Soroban type | Description                             |
  * |-------|--------------|---------------------------------------------|
  * | 0     | ScAddress    | sender — address that received refund   |
  * | 1     | I128         | amount refunded in USDC stroops         |
+ * | 2     | U32          | reason code (see table below)           |
+ *
+ * Cancellation reason codes:
+ *
+ * | Code | Name             | Description                              |
+ * |------|------------------|------------------------------------------|
+ * | 1    | sender_requested | Sender explicitly cancelled the gift     |
+ * | 2    | expired          | Gift expired and was cancelled           |
+ * | 3    | admin            | Cancelled by an admin                    |
  *
  * ### `upgraded` (admin-only, not decoded here)
  * Emitted by `upgrade()`.
@@ -58,9 +67,11 @@
  *
  * ## Versioning
  *
- * Schema version: **v1**. Breaking changes require a new topic name (e.g.
- * `initialized_v2`). Additive changes that append optional fields must update
- * this JSDoc and `docs/contract-events.md`.
+ * Schema version: **v2**. The `cancelled` payload gained a trailing `reason`
+ * (U32) field in v2; the `cancel(reason: u32)` signature is a breaking change
+ * (callers must now pass a reason code). Breaking changes require a new topic
+ * name (e.g. `initialized_v2`). Additive changes that append optional fields
+ * must update this JSDoc and `docs/contract-events.md`.
  *
  * ## Full documentation
  *
@@ -106,6 +117,8 @@ export interface CancelledEvent {
   txHash: string;
   sender: string;
   amount: bigint;
+  /** Cancellation reason code: 1=sender_requested, 2=expired, 3=admin. */
+  reason: number;
 }
 
 export type EscrowEvent = InitializedEvent | ClaimedEvent | CancelledEvent;
@@ -258,16 +271,17 @@ function decodeClaimedEvent(
 }
 
 function decodeCancelledEvent(
-  base: Omit<CancelledEvent, "type" | "sender" | "amount">,
+  base: Omit<CancelledEvent, "type" | "sender" | "amount" | "reason">,
   data: xdr.ScVal
 ): CancelledEvent {
   const items = data.vec();
-  if (!items || items.length !== 2) throw new Error("unexpected cancelled data shape");
-  const [senderVal, amountVal] = items;
+  if (!items || items.length !== 3) throw new Error("unexpected cancelled data shape");
+  const [senderVal, amountVal, reasonVal] = items;
   return {
     ...base,
     type: "cancelled",
     sender: Address.fromScVal(senderVal).toString(),
     amount: BigInt(scValToNative(amountVal) as number | bigint),
+    reason: Number(scValToNative(reasonVal) as number | bigint),
   };
 }

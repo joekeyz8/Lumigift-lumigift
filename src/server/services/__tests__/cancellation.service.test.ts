@@ -93,7 +93,7 @@ describe("cancelGiftForSender", () => {
     await cancelGiftForSender(gift);
 
     expect(mockRefund).not.toHaveBeenCalled();
-    expect(mockCancel).toHaveBeenCalledWith("gift-1", "not_required");
+    expect(mockCancel).toHaveBeenCalledWith("gift-1", "not_required", 1);
   });
 
   it("refunds a paid gift and records the provider's refund status", async () => {
@@ -104,7 +104,7 @@ describe("cancelGiftForSender", () => {
     const result = await cancelGiftForSender(gift);
 
     expect(mockRefund).toHaveBeenCalledWith("lumigift_gift-1");
-    expect(mockCancel).toHaveBeenCalledWith("gift-1", "pending");
+    expect(mockCancel).toHaveBeenCalledWith("gift-1", "pending", 1);
     expect(result.refundStatus).toBe("pending");
   });
 
@@ -134,8 +134,29 @@ describe("cancelGiftForSender", () => {
     const result = await cancelGiftForSender(gift);
 
     expect(mockRefund).toHaveBeenCalledTimes(1);
-    expect(mockCancel).toHaveBeenCalledWith("gift-1", "processed");
+    expect(mockCancel).toHaveBeenCalledWith("gift-1", "processed", 1);
     expect(result.status).toBe("cancelled");
+  });
+
+  it("passes the sender_requested reason code (1) for sender-initiated cancellations", async () => {
+    const gift = makeGift({ status: "pending_payment" });
+    mockCancel.mockResolvedValue({ ...gift, status: "cancelled", refundStatus: "not_required" });
+
+    await cancelGiftForSender(gift);
+
+    expect(mockCancel).toHaveBeenCalledWith("gift-1", "not_required", 1);
+  });
+
+  it.each([
+    ["expired", 2],
+    ["admin", 3],
+  ] as const)("maps the %s cancellation reason to code %i", async (reason, code) => {
+    const gift = makeGift({ status: "pending_payment" });
+    mockCancel.mockResolvedValue({ ...gift, status: "cancelled", refundStatus: "not_required" });
+
+    await cancelGiftForSender(gift, { reason });
+
+    expect(mockCancel).toHaveBeenCalledWith("gift-1", "not_required", code);
   });
 
   it.each(["claimed", "cancelled"] as const)(
@@ -163,6 +184,7 @@ describe("cancelGiftForSender", () => {
     expect(mockRefund).toHaveBeenNthCalledWith(1, "lumigift_gift-1");
     expect(mockRefund).toHaveBeenNthCalledWith(2, "lumigift_gift-1");
     expect(mockCancel).toHaveBeenCalledTimes(1);
+    expect(mockCancel).toHaveBeenCalledWith("gift-1", "pending", 1);
     expect(result.status).toBe("cancelled");
   });
 

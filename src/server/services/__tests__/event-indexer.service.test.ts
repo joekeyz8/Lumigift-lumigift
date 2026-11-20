@@ -387,6 +387,39 @@ describe("indexEscrowEvents (issue #76)", () => {
       expect(result.processed).toBe(1);
     });
 
+    it("applies cancelled event with reason code → persists reason and sets status to cancelled", async () => {
+      mockGetGift.mockResolvedValue({ ...baseGift, status: "locked" });
+      mockFetch.mockResolvedValue({
+        events: [
+          {
+            type: "cancelled",
+            contractId: CONTRACT_ID,
+            ledger: 300,
+            ledgerClosedAt: "2024-01-03T00:00:00Z",
+            txHash: "ghi789",
+            sender: "GSENDER",
+            amount: BigInt(100_000_000),
+            reason: 1, // sender_requested
+          },
+        ],
+        latestCursor: "0000000000000300-0000000001",
+      });
+
+      const result = await indexEscrowEvents();
+
+      expect(mockUpdateStatus).toHaveBeenCalledWith("gift-1", "cancelled");
+      expect(result.processed).toBe(1);
+
+      const insertCall = (mockDbQuery as jest.Mock).mock.calls.find(
+        (call: unknown[]) =>
+          typeof call[0] === "string" && call[0].includes("INSERT INTO stellar_event_log")
+      );
+      expect(insertCall).toBeDefined();
+      const payload = insertCall![1] as unknown[];
+      const serialized = JSON.stringify(payload);
+      expect(serialized).toContain('"reason":1');
+    });
+
     it("is idempotent — skips event if gift already in target status", async () => {
       mockGetGift.mockResolvedValue({ ...baseGift, status: "locked" });
       mockFetch.mockResolvedValue({

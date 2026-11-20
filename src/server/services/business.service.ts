@@ -10,8 +10,15 @@ import { initializePayment, ngnToKobo } from "@/lib/paystack";
 import { serverConfig } from "@/server/config";
 import { AppError, ERROR_CODES } from "@/server/errors";
 import { createGiftSchema } from "@/types/schemas";
+import { escrowClient } from "@/lib/stellar/escrow-client";
 
 export const MAX_BULK_RECIPIENTS = 500;
+
+/**
+ * Maximum number of gift escrow instances that can be initialised in a single
+ * `batch_initialize` contract call. Mirrors the on-chain limit.
+ */
+export const MAX_BATCH_INITIALIZE_SIZE = 20;
 
 const REQUIRED_COLUMNS = ["recipientName", "recipientPhone", "amountNgn", "unlockAt"] as const;
 
@@ -132,6 +139,70 @@ export async function assertBusinessAccount(userId: string): Promise<void> {
   if (rows[0]?.account_type !== "business") {
     throw new AppError(ERROR_CODES.FORBIDDEN, "A business account is required", 403);
   }
+}
+
+export interface BatchInitializeResult {
+  /** Transaction hashes, one per submitted batch. */
+  txHashes: string[];
+  /** Number of gift instances successfully initialised. */
+  initialized: number;
+  /** Items that could not be initialised, with the reason. */
+  failures: Array<{ index: number; item: BulkGiftItem; error: string }>;
+}
+
+/** Splits `items` into chunks of at most `size` elements. */
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+/**
+ * Initialises escrow instances for a bulk-gift order using the contract's
+ * atomic `batch_initialize` entry point.
+ *
+ * Items are chunked into batches of at most `MAX_BATCH_INITIALIZE_SIZE` (20)
+ * so each Stellar transaction stays within the contract's per-call limit.
+ * A failure in one batch does not abort the remaining batches; the failed
+ * items are reported in `failures` for partial-failure handling.
+ */
+export async function batchInitializeGifts(
+  userId: string,
+  items: BulkGiftItem[]
+): Promise<BatchInitializeResult> {
+  if (items.length === 0) {
+    return { txHashes: [], initialized: 0, failures: [] };
+  }
+
+  const result: BatchInitializeResult = { txHashes: [], initialized: 0, failures: [] };
+  const batches = chunk(items, MAX_BATCH_INITIALIZE_SIZE);
+
+  for (let b = 0; b < batches.length; b++) {
+    const batch = batches[b];
+    const offset = b * MAX_BATCH_INITIALIZE_SIZE;
+    try {
+      const { txHash } = await escrowClient.batchInitialize({
+        senderId: userId,
+        gifts: batch.map((item) => ({
+          recipientPhone: item.recipientPhone,
+          amountNgn: item.amountNgn,
+          unlockAt: item.unlockAt,
+          message: item.message,
+        })),
+      });
+      result.txHashes.push(txHash);
+      result.initialized += batch.length;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Batch initialization failed";
+      batch.forEach((item, i) => {
+        result.failures.push({ index: offset + i, item, error: message });
+      });
+    }
+  }
+
+  return result;
 }
 
 /** Persists the order and initialises a single Paystack charge covering every recipient. */

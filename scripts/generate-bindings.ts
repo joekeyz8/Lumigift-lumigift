@@ -29,6 +29,11 @@ const OUT_DIR = process.env.BINDINGS_OUT_DIR
 const OUT_FILE = path.join(OUT_DIR, "escrow-client.ts");
 const TMP_DIR = path.join(ROOT, ".bindings-tmp");
 
+// Active network for the generated client ("mainnet" | "testnet").
+// Forwarded to the CLI so the bindings match the deployed contract's
+// `network` storage key and the network-specific USDC address validation.
+const NETWORK = process.env.STELLAR_NETWORK ?? "testnet";
+
 // ─── Validate prerequisites ───────────────────────────────────────────────────
 
 if (!fs.existsSync(WASM_PATH)) {
@@ -40,7 +45,7 @@ if (!fs.existsSync(WASM_PATH)) {
 
 fs.mkdirSync(TMP_DIR, { recursive: true });
 
-console.log("Generating TypeScript bindings from WASM…");
+console.log(`Generating TypeScript bindings from WASM (network: ${NETWORK})…`);
 
 const result = spawnSync(
   "stellar",
@@ -53,7 +58,7 @@ const result = spawnSync(
     "--contract-id",
     process.env.STELLAR_ESCROW_CONTRACT_ID ?? "PLACEHOLDER_CONTRACT_ID",
     "--network",
-    process.env.STELLAR_NETWORK ?? "testnet",
+    NETWORK,
     "--output-dir",
     TMP_DIR,
     "--overwrite",
