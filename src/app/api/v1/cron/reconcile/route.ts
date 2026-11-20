@@ -22,17 +22,7 @@ import {
 import type { ApiResponse } from "@/types";
 import type { ReconcileResult } from "@/server/services/payment-reconciliation.service";
 import { isAuthorizedCronRequest } from "@/server/cron-auth";
-
-/** Ping a dead-man's-switch URL (e.g. Healthchecks.io / BetterUptime). */
-async function pingHealthcheck(suffix = "") {
-  const url = process.env.HEALTHCHECK_URL_RECONCILE ?? process.env.HEALTHCHECK_URL;
-  if (!url) return;
-  try {
-    await fetch(`${url}${suffix}`, { method: "GET" });
-  } catch (err) {
-    console.error("[cron/reconcile] healthcheck ping failed", err);
-  }
-}
+import { pingCronHealthcheck } from "@/server/cron-healthcheck";
 
 export const GET = async (req: NextRequest) => {
   const authHeader = req.headers.get("authorization");
@@ -57,7 +47,7 @@ export const GET = async (req: NextRequest) => {
       deadLetteredTotal: deadLettered.length,
     });
 
-    await pingHealthcheck(); // success ping
+    await pingCronHealthcheck("reconcile"); // success ping (after completion)
 
     return NextResponse.json<
       ApiResponse<ReconcileResult & { durationMs: number; deadLetteredTotal: number }>
@@ -74,7 +64,7 @@ export const GET = async (req: NextRequest) => {
     console.error("[cron/reconcile] run failed", err);
     recordCronFailure("cron/v1/reconcile", durationMs, err);
     await recordDeadLetter("cron/v1/reconcile", durationMs, err);
-    await pingHealthcheck("/fail"); // failure ping
+    await pingCronHealthcheck("reconcile", "/fail"); // failure ping
     return NextResponse.json<ApiResponse<never>>(
       { success: false, error: "Reconciliation job failed" },
       { status: 500 }

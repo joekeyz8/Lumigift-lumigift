@@ -12,6 +12,8 @@ This runbook provides procedures for handling common production incidents in Lum
 - **Communication**: Update stakeholders via Slack #incidents channel
 - **Post-Mortem**: Conduct blameless post-mortem for all P0/P1 incidents
 - **Logs Dashboard**: Grafana Explore (Loki) at `${GRAFANA_URL}/explore` — see [Log Aggregation](#log-aggregation)
+- **SLO Dashboard**: Grafana SLO overview (availability, p95 latency, payment success rate, error-budget burn rate) at `${GRAFANA_URL}/d/lumigift-slo` — see [SLO Dashboards](./slo-dashboards.md)
+=======
 
 ## Database Connection Failure
 

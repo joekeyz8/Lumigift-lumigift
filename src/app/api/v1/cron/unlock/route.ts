@@ -8,18 +8,7 @@ import {
 } from "@/lib/metrics";
 import type { ApiResponse } from "@/types";
 import { isAuthorizedCronRequest } from "@/server/cron-auth";
-
-/** Ping a dead-man's-switch URL (e.g. Healthchecks.io / BetterUptime). */
-async function pingHealthcheck(suffix = "") {
-  const url = process.env.HEALTHCHECK_URL;
-  if (!url) return;
-  try {
-    await fetch(`${url}${suffix}`, { method: "GET" });
-  } catch (err) {
-    // Non-fatal: healthcheck ping failure should never mask the actual result
-    console.error("[cron] healthcheck ping failed", err);
-  }
-}
+import { pingCronHealthcheck } from "@/server/cron-healthcheck";
 
 /** Called by Vercel Cron or an external scheduler every minute. */
 export const GET = async (req: NextRequest) => {
@@ -38,7 +27,8 @@ export const GET = async (req: NextRequest) => {
     const durationMs = elapsed();
 
     recordCronSuccess("cron/v1/unlock", durationMs, { processed });
-    await pingHealthcheck(); // success ping
+    // Success ping fires only after processUnlocks completes (confirms completion)
+    await pingCronHealthcheck("cron/v1/unlock");
 
     return NextResponse.json<ApiResponse<{ processed: number; durationMs: number }>>({
       success: true,
@@ -48,7 +38,7 @@ export const GET = async (req: NextRequest) => {
     const durationMs = elapsed();
     recordCronFailure("cron/v1/unlock", durationMs, err);
     await recordDeadLetter("cron/v1/unlock", durationMs, err);
-    await pingHealthcheck("/fail"); // failure ping
+    await pingCronHealthcheck("cron/v1/unlock", { fail: true }); // failure ping
     return NextResponse.json<ApiResponse<never>>(
       { success: false, error: "Cron job failed" },
       { status: 500 }

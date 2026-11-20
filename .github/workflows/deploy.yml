@@ -156,12 +156,36 @@ jobs:
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ENVIRONMENT: production
+          SENTRY_RELEASE: ${{ github.sha }}
+
+      # ── Sentry release tracking + source maps ───────────────────────────────
+      # Tag every deploy with the commit SHA so errors are attributable to a
+      # specific release, and upload source maps so stack traces are readable.
+      - name: Create Sentry release
+        run: |
+          npx @sentry/cli@2 releases new "${{ github.sha }}" \
+            --org "${{ vars.SENTRY_ORG }}" \
+            --project "${{ vars.SENTRY_PROJECT }}"
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
       - name: Upload source maps to Sentry
-        run: npx @sentry/cli@2 releases files "${{ github.sha }}" upload-sourcemaps .next --url-prefix "~/_next" --rewrite
+        run: |
+          npx @sentry/cli@2 releases files "${{ github.sha }}" upload-sourcemaps .next \
+            --org "${{ vars.SENTRY_ORG }}" \
+            --project "${{ vars.SENTRY_PROJECT }}" \
+            --url-prefix "~/_next" \
+            --rewrite
         env:
-          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+      - name: Finalize Sentry release
+        run: |
+          npx @sentry/cli@2 releases finalize "${{ github.sha }}" \
+            --org "${{ vars.SENTRY_ORG }}" \
+            --project "${{ vars.SENTRY_PROJECT }}"
+        env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
       - name: Deploy to Vercel
