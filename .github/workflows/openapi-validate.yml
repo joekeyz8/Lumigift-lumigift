@@ -137,24 +137,24 @@ jobs:
         with:
           node-version: 20
 
-      - name: Check for new route files not reflected in openapi.yaml
+      - name: Install js-yaml for route checker
+        run: npm install --no-save js-yaml
+
+      - name: Check that every API route is documented in openapi.yaml
         id: route-check
         run: |
           set +e
 
-          # Collect all route.ts files added or modified in this PR
-          CHANGED_ROUTES=$(git diff --name-only --diff-filter=AM \
-            "origin/${{ github.base_ref }}" HEAD \
-            -- 'src/app/api/**' \
-            | grep 'route\.ts$' || true)
+          # Collect ALL route.ts files under src/app/api (not just changed ones)
+          ALL_ROUTES=$(find src/app/api -type f -name 'route.ts' | sort)
 
-          if [ -z "$CHANGED_ROUTES" ]; then
-            echo "✅ No API route files changed in this PR."
+          if [ -z "$ALL_ROUTES" ]; then
+            echo "✅ No API route files found under src/app/api."
             exit 0
           fi
 
-          echo "Changed route files:"
-          echo "$CHANGED_ROUTES"
+          echo "API route files found:"
+          echo "$ALL_ROUTES"
           echo ""
 
           # Extract documented paths from openapi.yaml
@@ -165,47 +165,55 @@ jobs:
             Object.keys(spec.paths ?? {}).forEach(p => console.log(p));
           " 2>/dev/null || echo "")
 
+          if [ -z "$DOCUMENTED_PATHS" ]; then
+            echo "❌ Could not extract documented paths from openapi.yaml."
+            exit 1
+          fi
+
           UNDOCUMENTED=0
+          TOTAL=0
           while IFS= read -r route_file; do
+            [ -z "$route_file" ] && continue
+            TOTAL=$((TOTAL + 1))
+
             # Convert file path to expected API path
             # e.g. src/app/api/v1/gifts/route.ts  → /api/v1/gifts
             #      src/app/api/v1/gifts/[id]/route.ts → /api/v1/gifts/{id}
             API_PATH=$(echo "$route_file" \
               | sed 's|src/app||' \
               | sed 's|/route\.ts$||' \
-              | sed 's|\[id\]|{id}|g' \
-              | sed 's|\[\.\.\.[^]]*\]|{slug}|g')
+              | sed 's|\[\.\.\.[^]]*\]|{slug}|g' \
+              | sed 's|\[[^]]*\]|{id}|g')
 
             if echo "$DOCUMENTED_PATHS" | grep -qF "$API_PATH"; then
               echo "✅ Documented: $API_PATH  (from $route_file)"
             else
-              echo "⚠️  UNDOCUMENTED: $API_PATH  (from $route_file)"
+              echo "❌ UNDOCUMENTED: $API_PATH  (from $route_file)"
               UNDOCUMENTED=$((UNDOCUMENTED + 1))
             fi
-          done <<< "$CHANGED_ROUTES"
+          done <<< "$ALL_ROUTES"
+
+          echo ""
+          echo "Checked $TOTAL route file(s); $UNDOCUMENTED undocumented."
 
           if [ "$UNDOCUMENTED" -gt 0 ]; then
             echo ""
-            echo "⚠️  $UNDOCUMENTED route change(s) have no matching entry in openapi.yaml."
+            echo "❌ $UNDOCUMENTED route(s) have no matching entry in openapi.yaml."
             echo ""
-            echo "Please update openapi.yaml (and public/openapi.yaml) to document the new"
-            echo "or changed route(s) before merging this PR."
-            # Non-blocking for now — change exit 0 → exit 1 to enforce strictly.
-            exit 0
+            echo "Please update openapi.yaml (and public/openapi.yaml) to document the"
+            echo "missing route(s) before merging this PR."
+            exit 1
           fi
 
-          echo "✅ All changed routes are documented in openapi.yaml."
+          echo "✅ All API routes are documented in openapi.yaml."
         env:
           NODE_PATH: node_modules
-
-      - name: Install js-yaml for route checker
-        run: npm install --no-save js-yaml
 
   # ─── 4. Publish API reference (on push to main) ───────────────────────────
   publish-api-reference:
     name: Publish API Reference
     runs-on: ubuntu-latest
-    needs: [validate-openapi]
+    needs: [validate-openapi, detect-undocumented-routes]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

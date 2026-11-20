@@ -26,7 +26,20 @@ Variables are validated on startup by a Zod schema in `src/server/config/env.ts`
 13. [Gift Amount Limits](#13-gift-amount-limits)
 14. [Cloudinary (Media Uploads)](#14-cloudinary-media-uploads)
 15. [Error Monitoring — Sentry](#15-error-monitoring--sentry)
-16. [Variable Quick-Reference Table](#16-variable-quick-reference-table)
+16. [WebAuthn / Passkeys](#16-webauthn--passkeys)
+17. [Referral Programme](#17-referral-programme)
+18. [Business Accounts](#18-business-accounts)
+19. [Secrets Validation (`secrets:validate`)](#19-secrets-validation-secretsvalidate)
+20. [Variable Quick-Reference Table](#20-variable-quick-reference-table)
+21. [Keeping This Document In Sync](#21-keeping-this-document-in-sync)
+
+---
+
+## Conventions
+
+- **Required** — the Zod schema in `src/server/config/env.ts` has no default and no `.optional()`; startup fails if the variable is missing.
+- **Sensitive** — marked with 🔒. These values must never be committed, logged, or exposed to the browser. Use placeholder values only in examples.
+- **Scope** — `Server` means the value is only read in server code; `Server + Client` means it is prefixed `NEXT_PUBLIC_` and inlined into the browser bundle.
 
 ---
 
@@ -641,7 +654,203 @@ Store as a CI secret (e.g., GitHub Actions secret) — never in `.env.local`.
 
 ---
 
-## 16. Variable Quick-Reference Table
+## 16. WebAuthn / Passkeys
+
+Passkey (WebAuthn) registration and login. The relying party ID and origin must match the domain the browser sees, otherwise the browser rejects the ceremony.
+
+### `WEBAUTHN_RP_ID`
+
+| | |
+|---|---|
+| **Required** | No (default: hostname derived from `NEXT_PUBLIC_APP_URL`) |
+| **Scope** | Server only |
+| **Format** | Bare hostname — no scheme, no port, no path |
+| **Example** | `lumigift.com` |
+| **Sensitive** | No |
+
+Relying Party ID used when generating and verifying WebAuthn challenges. Must be the registrable domain of the origin (or a parent of it). For local development use `localhost`.
+
+### `WEBAUTHN_RP_NAME`
+
+| | |
+|---|---|
+| **Required** | No (default: `NEXT_PUBLIC_APP_NAME`) |
+| **Scope** | Server only |
+| **Format** | Plain text string |
+| **Example** | `Lumigift` |
+| **Sensitive** | No |
+
+Human-readable name shown by the browser/OS in the passkey prompt.
+
+### `WEBAUTHN_ORIGIN`
+
+| | |
+|---|---|
+| **Required** | No (default: `NEXT_PUBLIC_APP_URL`) |
+| **Scope** | Server only |
+| **Format** | Full origin with scheme — no trailing slash |
+| **Example** | `https://lumigift.com` |
+| **Sensitive** | No |
+
+Expected origin of WebAuthn ceremonies. Must exactly match the origin the browser reports (including `http://localhost:3000` in dev).
+
+### `WEBAUTHN_CHALLENGE_TTL_SEC`
+
+| | |
+|---|---|
+| **Required** | No (default: `300`) |
+| **Scope** | Server only |
+| **Format** | Positive integer (seconds) |
+| **Example** | `300` |
+| **Sensitive** | No |
+
+How long a generated WebAuthn challenge remains valid before it must be re-requested.
+
+---
+
+## 17. Referral Programme
+
+Referral codes and reward crediting.
+
+### `REFERRAL_CODE_LENGTH`
+
+| | |
+|---|---|
+| **Required** | No (default: `8`) |
+| **Scope** | Server only |
+| **Format** | Positive integer |
+| **Example** | `8` |
+| **Sensitive** | No |
+
+Length of generated referral codes. Keep short enough to type, long enough to avoid collisions.
+
+### `REFERRAL_REWARD_NGN`
+
+| | |
+|---|---|
+| **Required** | No (default: `500`) |
+| **Scope** | Server only |
+| **Format** | Positive integer (NGN) |
+| **Example** | `500` |
+| **Sensitive** | No |
+
+Reward credited to the referrer when a referred user completes their first qualifying gift.
+
+### `REFERRAL_MAX_REWARDS_PER_USER`
+
+| | |
+|---|---|
+| **Required** | No (default: `50`) |
+| **Scope** | Server only |
+| **Format** | Positive integer |
+| **Example** | `50` |
+| **Sensitive** | No |
+
+Cap on the number of referral rewards a single user can earn, to limit abuse.
+
+### `REFERRAL_ENABLED`
+
+| | |
+|---|---|
+| **Required** | No (default: `true`) |
+| **Scope** | Server only |
+| **Format** | `"true"` or `"false"` |
+| **Example** | `true` |
+| **Sensitive** | No |
+
+Feature flag to enable or disable the referral programme without a deploy.
+
+---
+
+## 18. Business Accounts
+
+Organisation/business accounts, team members, and invoicing.
+
+### `BUSINESS_ACCOUNTS_ENABLED`
+
+| | |
+|---|---|
+| **Required** | No (default: `false`) |
+| **Scope** | Server only |
+| **Format** | `"true"` or `"false"` |
+| **Example** | `false` |
+| **Sensitive** | No |
+
+Feature flag gating business-account creation and the business dashboard.
+
+### `BUSINESS_MAX_TEAM_MEMBERS`
+
+| | |
+|---|---|
+| **Required** | No (default: `10`) |
+| **Scope** | Server only |
+| **Format** | Positive integer |
+| **Example** | `10` |
+| **Sensitive** | No |
+
+Maximum number of team members that can be invited to a single business account.
+
+### `BUSINESS_INVOICE_PREFIX`
+
+| | |
+|---|---|
+| **Required** | No (default: `"INV"`) |
+| **Scope** | Server only |
+| **Format** | Uppercase alphanumeric string |
+| **Example** | `INV` |
+| **Sensitive** | No |
+
+Prefix used when generating business invoice numbers.
+
+### `BUSINESS_WEBHOOK_SECRET`
+
+| | |
+|---|---|
+| **Required** | No (endpoint disabled when unset) |
+| **Scope** | Server only — sensitive 🔒 |
+| **Format** | Random string, minimum 32 characters |
+| **Example** | *(not shown — generate your own)* |
+| **Generate** | `openssl rand -base64 32` |
+| **Sensitive** | Yes 🔒 |
+
+Signing secret used to verify outbound business-account webhook deliveries. Never commit a real value.
+
+---
+
+## 19. Secrets Validation (`secrets:validate`)
+
+`npm run secrets:validate` runs `scripts/validate-production-secrets.ts`. It is intended to be run in CI and immediately before a production deploy to catch missing, placeholder, or wrong-environment secrets.
+
+### What it checks
+
+- **Presence** — every variable marked required in `src/server/config/env.ts` must be set (non-empty).
+- **Placeholder detection** — values matching known placeholders are rejected, e.g. `changeme`, `your-secret-here`, `xxx`, `TODO`, `sk_test_…` in production, and the literal values shipped in `.env.example`.
+- **Minimum length / format** — secrets must meet the schema's minimum length (e.g. 32 chars for `NEXTAUTH_SECRET`, `CSRF_SECRET`, `CRON_SECRET`) and format checks (Stellar keys start with `S`/`G`, Paystack/Stripe key prefixes).
+- **Mainnet live-key requirements** — when `STELLAR_NETWORK=mainnet`, the script additionally requires live (non-test) payment keys: `PAYSTACK_SECRET_KEY` must start with `sk_live_`, `STRIPE_SECRET_KEY` must start with `sk_live_`, and `NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY` / `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` must start with `pk_live_`. Test keys on mainnet are treated as failures.
+- **Cross-field consistency** — `NEXTAUTH_URL` must match `NEXT_PUBLIC_APP_URL`; `STELLAR_NETWORK_PASSPHRASE` must match `STELLAR_NETWORK`; `WEBAUTHN_ORIGIN` must match `NEXT_PUBLIC_APP_URL`.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | All checks passed. |
+| `1` | One or more checks failed — the offending variable names are printed (values are never printed). |
+
+### Usage
+
+```bash
+# Validate the current environment (reads .env.local / process env)
+npm run secrets:validate
+
+# In CI, provide secrets via environment variables, not a committed file
+NEXTAUTH_SECRET="$NEXTAUTH_SECRET" npm run secrets:validate
+```
+
+> The script never prints secret values — only variable names and the reason for failure.
+
+---
+
+## 20. Variable Quick-Reference Table
 
 | Variable | Required | Scope | Default |
 |---|---|---|---|
@@ -689,6 +898,42 @@ Store as a CI secret (e.g., GitHub Actions secret) — never in `.env.local`.
 | `SENTRY_ORG` | No | CI only | — |
 | `SENTRY_PROJECT` | No | CI only | — |
 | `SENTRY_AUTH_TOKEN` | No | CI only | — |
+| `WEBAUTHN_RP_ID` | No | Server | derived from `NEXT_PUBLIC_APP_URL` |
+| `WEBAUTHN_RP_NAME` | No | Server | `NEXT_PUBLIC_APP_NAME` |
+| `WEBAUTHN_ORIGIN` | No | Server | `NEXT_PUBLIC_APP_URL` |
+| `WEBAUTHN_CHALLENGE_TTL_SEC` | No | Server | `300` |
+| `REFERRAL_CODE_LENGTH` | No | Server | `8` |
+| `REFERRAL_REWARD_NGN` | No | Server | `500` |
+| `REFERRAL_MAX_REWARDS_PER_USER` | No | Server | `50` |
+| `REFERRAL_ENABLED` | No | Server | `true` |
+| `BUSINESS_ACCOUNTS_ENABLED` | No | Server | `false` |
+| `BUSINESS_MAX_TEAM_MEMBERS` | No | Server | `10` |
+| `BUSINESS_INVOICE_PREFIX` | No | Server | `INV` |
+| `BUSINESS_WEBHOOK_SECRET` 🔒 | No | Server | — |
+
+Variables marked 🔒 are sensitive — never commit real values.
+
+---
+
+## 21. Keeping This Document In Sync
+
+This document must stay in lockstep with `serverConfig` in `src/server/config/index.ts` and the Zod schema in `src/server/config/env.ts`.
+
+**Review checklist** (run whenever a variable is added, renamed, or removed):
+
+- [ ] Every key in `src/server/config/env.ts` has a section in this document with name, description, required/optional, example value, and a sensitive marker where applicable.
+- [ ] Every key exposed on `serverConfig` (`src/server/config/index.ts`) is documented — including derived/defaulted values.
+- [ ] The [Quick-Reference Table](#20-variable-quick-reference-table) lists every variable with its required status and default.
+- [ ] `.env.example` contains a matching entry (with a placeholder, never a real value) for every variable.
+- [ ] New sensitive variables are marked 🔒 and added to the `secrets:validate` checks if they need format/length validation.
+- [ ] The Table of Contents is updated if a new section was added.
+
+A quick way to diff the schema against this doc:
+
+```bash
+# List variable names declared in the Zod schema
+grep -oE '^\s+[A-Z0-9_]+:' src/server/config/env.ts | tr -d ' :' | sort -u
+```
 
 ---
 
@@ -700,3 +945,5 @@ Store as a CI secret (e.g., GitHub Actions secret) — never in `.env.local`.
 - `docs/local-dev-setup.md` — step-by-step local setup guide
 - `docs/troubleshooting.md` — diagnosing startup failures and misconfigured variables
 - `src/server/config/env.ts` — Zod validation schema (source of truth for all defaults and formats)
+- `src/server/config/index.ts` — `serverConfig` object (source of truth for what the app actually reads)
+- `scripts/validate-production-secrets.ts` — `secrets:validate` implementation

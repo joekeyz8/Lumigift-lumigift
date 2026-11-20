@@ -24,6 +24,19 @@ const HTML = `<!DOCTYPE html>
 </html>`;
 
 export function GET() {
+  const env = process.env.NODE_ENV;
+  const vercelEnv = process.env.VERCEL_ENV;
+
+  const isAllowed =
+    env === "development" ||
+    env === "test" ||
+    vercelEnv === "development" ||
+    vercelEnv === "preview";
+
+  if (!isAllowed) {
+    return new NextResponse("Not Found", { status: 404 });
+  }
+
   return new NextResponse(HTML, {
     headers: { "Content-Type": "text/html; charset=utf-8" },
   });

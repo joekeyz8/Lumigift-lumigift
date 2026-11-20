@@ -1,122 +1,143 @@
-# Contract Upgrade & Migration Guide
+# Stellar Testnet → Mainnet Migration
 
-This document describes how to upgrade the Lumigift escrow contract using the
-Soroban upgrade mechanism and how to migrate active escrows when a breaking
-change requires deploying a new contract.
+This runbook walks through migrating the application's Stellar configuration from testnet to mainnet. Follow the steps in order. Do not skip the preconditions or verification steps.
 
----
-
-## Upgrade Mechanism
-
-The contract exposes an `upgrade(new_wasm_hash: BytesN<32>)` function that
-replaces the contract's WASM in-place. The contract address and all stored
-state are preserved — only the executable code changes.
-
-**Authorization:** Only the `admin` address stored during `initialize` can call
-`upgrade`. Any other caller will receive an authorization error.
-
-**Event emitted:**
-
-```
-topic:  ("upgraded",)
-data:   (old_contract_address, new_wasm_hash)
-```
-
-### Step-by-step: upgrading a deployed contract
-
-1. **Build the new WASM:**
-
-   ```bash
-   npm run contract:build
-   # Output: contracts/target/wasm32-unknown-unknown/release/lumigift_escrow.wasm
-   ```
-
-2. **Upload the new WASM to the network (get the hash):**
-
-   ```bash
-   stellar contract upload \
-     --network testnet \
-     --source <ADMIN_SECRET_KEY> \
-     --wasm contracts/target/wasm32-unknown-unknown/release/lumigift_escrow.wasm
-   # Outputs: <NEW_WASM_HASH>
-   ```
-
-3. **Call `upgrade` on the existing contract:**
-
-   ```bash
-   stellar contract invoke \
-     --network testnet \
-     --source <ADMIN_SECRET_KEY> \
-     --id <CONTRACT_ID> \
-     -- upgrade \
-     --new_wasm_hash <NEW_WASM_HASH>
-   ```
-
-4. **Verify the upgrade:**
-   ```bash
-   stellar contract info --network testnet --id <CONTRACT_ID>
-   # Confirm the WASM hash matches <NEW_WASM_HASH>
-   ```
+> **Owner:** Stellar integration engineer
+> **Reviewer sign-off required before execution** (see bottom of document).
 
 ---
 
-## Migrating Active Escrows (Breaking Changes)
+## 0. Preconditions
 
-If a breaking change requires deploying a **new contract** (e.g., storage layout
-changes that cannot be handled in-place), follow this process:
-
-### 1. Snapshot active escrows
-
-Query all escrows that are not yet claimed from the database:
-
-```sql
-SELECT stellar_contract_id, sender_address, recipient_address, amount_stroops, unlock_time
-FROM gifts
-WHERE claimed = false
-  AND stellar_contract_id IS NOT NULL;
-```
-
-### 2. Deploy the new contract version
-
-```bash
-STELLAR_NETWORK=testnet npm run contract:deploy
-# Note the new CONTRACT_ID
-```
-
-### 3. Re-initialize each active escrow on the new contract
-
-For each active escrow, the platform must:
-
-1. Call `initialize` on the **new** contract with the original parameters.
-2. Fund the new contract with the escrowed USDC (transfer from platform wallet).
-3. Update the `stellar_contract_id` in the database to the new contract address.
-
-> **Note:** The platform wallet must hold sufficient USDC to re-fund all active
-> escrows. Coordinate with the treasury before executing migration.
-
-### 4. Drain the old contract (if possible)
-
-If the old contract has an emergency withdrawal function, call it to recover
-any remaining funds. Otherwise, wait for all active escrows to be claimed
-naturally before decommissioning.
-
-### 5. Update environment variables
-
-```bash
-# Update STELLAR_ESCROW_CONTRACT_ID in all environments
-STELLAR_ESCROW_CONTRACT_ID=<NEW_CONTRACT_ID>
-```
-
-Update GitHub secrets (`STAGING_STELLAR_ESCROW_CONTRACT_ID`,
-`STELLAR_ESCROW_CONTRACT_ID`) and redeploy the Next.js app.
+- [ ] All changes have been merged to the release branch and CI is green.
+- [ ] A maintenance window has been scheduled and announced to stakeholders.
+- [ ] You have access to the production secret manager / deployment environment.
+- [ ] You have a funded mainnet deployer keypair (with enough XLM for contract deployment fees).
+- [ ] You have the mainnet USDC issuer address confirmed from an authoritative source (Circle).
+- [ ] You have a current backup of `.contract-ids.json` and the production env file.
+- [ ] You have read the rollback section (Section 8) and know how to trigger it.
 
 ---
 
-## Rollback
+## 1. Record the current (testnet) state
 
-The `upgrade` function is **not reversible** via the contract itself. To roll
-back, repeat the upgrade process with the previous WASM hash (which must have
-been uploaded to the network previously).
+Capture the current values so rollback is possible.
 
-Always keep the WASM hash of the previous version in your deployment log before
-upgrading.
+- [ ] Copy the current `.contract-ids.json` to a safe location (e.g. `.contract-ids.testnet.bak.json`).
+- [ ] Record the current env values:
+  - [ ] `STELLAR_NETWORK`
+  - [ ] `STELLAR_HORIZON_URL`
+  - [ ] `STELLAR_NETWORK_PASSPHRASE`
+  - [ ] `STELLAR_RPC_URL`
+  - [ ] `USDC_ISSUER`
+  - [ ] Exchange-rate feed configuration (see Section 6)
+- [ ] Note the currently deployed testnet contract ID(s).
+
+---
+
+## 2. Update Stellar environment variables
+
+Set the following in the production environment (secret manager / deployment config). Use the values below as the mainnet targets.
+
+- [ ] `STELLAR_NETWORK=mainnet` (or `public`, matching the value your config loader expects — confirm against `src/config`).
+- [ ] `STELLAR_HORIZON_URL=https://horizon.stellar.org`
+- [ ] `STELLAR_NETWORK_PASSPHRASE=Public Global Stellar Network ; September 2015`
+- [ ] `STELLAR_RPC_URL=https://soroban-rpc.mainnet.stellar.gateway.fm` (or your approved mainnet RPC provider).
+- [ ] `USDC_ISSUER=GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN` (mainnet USDC issuer — verify before use).
+
+> ⚠️ The network passphrase must match the network exactly. A mismatch will cause signature verification failures.
+
+- [ ] Double-check every value against the mainnet reference before proceeding.
+
+---
+
+## 3. Deploy the mainnet contract
+
+- [ ] Confirm the deployer keypair is configured and funded on mainnet.
+- [ ] Run the deployment script with the mainnet confirmation flag:
+
+  ```bash
+  npx ts-node scripts/deploy-contract.ts --confirm-mainnet
+  ```
+
+- [ ] Capture the deployed contract ID from the script output.
+- [ ] Confirm the deployment transaction succeeded on a mainnet explorer (e.g. Stellar Expert).
+
+---
+
+## 4. Update `.contract-ids.json`
+
+- [ ] Open `.contract-ids.json`.
+- [ ] Update the mainnet entry with the contract ID captured in Section 3.
+- [ ] Leave the testnet entry intact (do not delete it).
+- [ ] Validate the JSON is well-formed:
+
+  ```bash
+  node -e "JSON.parse(require('fs').readFileSync('.contract-ids.json','utf8')); console.log('ok')"
+  ```
+
+- [ ] Commit the change through the normal review process.
+
+---
+
+## 5. Deploy the application with the new configuration
+
+- [ ] Deploy the application so it picks up the updated env vars and `.contract-ids.json`.
+- [ ] Confirm the deployment completed without errors.
+
+---
+
+## 6. Switch the exchange-rate feed
+
+- [ ] Update the exchange-rate feed configuration to point at the mainnet source (per the provider's mainnet endpoint / asset identifiers).
+- [ ] Confirm the feed is reading mainnet USDC (`USDC_ISSUER` from Section 2).
+- [ ] Restart or reload the rate-feed worker if required.
+
+---
+
+## 7. Verification
+
+- [ ] Application health checks pass.
+- [ ] Logs show the app connected to `horizon.stellar.org` (mainnet), not testnet.
+- [ ] A read-only contract call against the mainnet contract ID succeeds.
+- [ ] Exchange-rate values are populated and plausible (non-zero, correct asset).
+- [ ] Perform a small end-to-end smoke transaction on mainnet and confirm it settles.
+- [ ] Confirm no testnet endpoints or passphrases remain in the running configuration.
+
+---
+
+## 8. Rollback procedure
+
+Trigger rollback if any verification step in Section 7 fails and cannot be resolved quickly.
+
+- [ ] Restore the previous env values recorded in Section 1:
+  - [ ] `STELLAR_NETWORK`
+  - [ ] `STELLAR_HORIZON_URL`
+  - [ ] `STELLAR_NETWORK_PASSPHRASE`
+  - [ ] `STELLAR_RPC_URL`
+  - [ ] `USDC_ISSUER`
+- [ ] Restore `.contract-ids.json` from the backup taken in Section 1.
+- [ ] Revert the exchange-rate feed configuration to the previous (testnet) source.
+- [ ] Redeploy the application with the restored configuration.
+- [ ] Re-run the verification steps in Section 7 against testnet to confirm the system is healthy.
+- [ ] Notify stakeholders of the rollback and open an incident/ticket to investigate.
+
+> Note: the mainnet contract deployment (Section 3) does not need to be undone for rollback; simply stop pointing the app at it.
+
+---
+
+## 9. Post-migration
+
+- [ ] Update the launch readiness backlog (H-9) to mark this item complete.
+- [ ] Archive the recorded testnet state and deployment logs with the release record.
+- [ ] Schedule a follow-up to remove stale testnet configuration once mainnet is stable.
+
+---
+
+## Reviewer sign-off
+
+This procedure must be reviewed by the engineer who built the Stellar integration before execution.
+
+- [ ] Reviewed by (Stellar integration engineer): ______________________  Date: __________
+- [ ] Executed by: ______________________  Date: __________
+- [ ] Rollback verified by: ______________________  Date: __________

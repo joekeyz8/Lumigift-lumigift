@@ -197,7 +197,21 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+### API Reference
+
+Interactive API documentation is generated from the OpenAPI spec
+(`openapi.yaml`) and served by Swagger UI at
+[http://localhost:3000/api/docs](http://localhost:3000/api/docs) in
+development and staging. The same spec is published as a static Redoc
+artifact by CI (`openapi-validate.yml`), which also validates the spec on
+every pull request.
+
+- **Swagger UI (dev/staging):** `/api/docs`
+- **OpenAPI spec:** [`openapi.yaml`](openapi.yaml)
+- **Static Redoc artifact:** downloaded from the `openapi-validate` workflow run
+
 ### Storybook (isolated component development)
+=======
 
 Lumigift uses [Storybook](https://storybook.js.org/) to develop and review UI
 components in isolation. Stories exist for `Button`, `Input`, `Badge`,

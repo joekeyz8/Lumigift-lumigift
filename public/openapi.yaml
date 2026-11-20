@@ -373,6 +373,8 @@ paths:
       description: |
         Transfers the locked USDC to the recipient's Stellar address.
         Requires the gift to be in `locked` status and past its unlock time.
+        This endpoint is unauthenticated — the claim is authorised by knowledge
+        of the gift ID and the recipient's Stellar key.
       parameters:
         - $ref: "#/components/parameters/GiftId"
       requestBody:
@@ -1055,8 +1057,29 @@ paths:
       responses:
         "200":
           description: Indexing run complete
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          indexed:
+                            type: integer
+                            description: Number of contract events persisted in this run
+                          durationMs:
+                            type: integer
+                            description: Wall-clock time of the run in milliseconds
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
 components:
   securitySchemes:
@@ -1067,6 +1090,8 @@ components:
       description: |
         NextAuth.js session cookie obtained after completing the phone OTP flow.
         Valid for 30 days. Renews automatically on activity.
+        Admin endpoints additionally require the session user to hold the
+        `admin` role — a valid session without that role returns `403 FORBIDDEN`.
     csrfToken:
       type: apiKey
       in: header
@@ -1074,6 +1099,8 @@ components:
       description: |
         Signed CSRF token required on all state-mutating requests (POST, PUT, DELETE).
         Obtain from `GET /api/v1/csrf`. Expires after 1 hour.
+        Webhook endpoints (`/api/v1/payments`, `/api/v1/payments/stripe/webhook`)
+        are exempt — they are authenticated by provider signature instead.
     cronBearer:
       type: http
       scheme: bearer
@@ -1087,8 +1114,8 @@ components:
         Current API version number. Clients should assert this matches the version
         they were built against. A change in major version indicates breaking changes.
       schema:
-        type: integer
-        example: 1
+        type: string
+        example: v1
 
   parameters:
     GiftId:
@@ -1234,11 +1261,45 @@ components:
         - expired
       example: locked
 
+    GiftStatusTransition:
+      type: object
+      description: |
+        Allowed lifecycle transitions for a gift. Any transition not listed here
+        is rejected with `409 INVALID_TRANSITION`.
+      properties:
+        draft:
+          type: array
+          items:
+            $ref: "#/components/schemas/GiftStatus"
+          example: [pending_payment, cancelled]
+        pending_payment:
+          type: array
+          items:
+            $ref: "#/components/schemas/GiftStatus"
+          example: [funded, cancelled]
+        funded:
+          type: array
+          items:
+            $ref: "#/components/schemas/GiftStatus"
+          example: [locked]
+        locked:
+          type: array
+          items:
+            $ref: "#/components/schemas/GiftStatus"
+          example: [unlocked, cancelled]
+        unlocked:
+          type: array
+          items:
+            $ref: "#/components/schemas/GiftStatus"
+          example: [claimed, expired]
+
     PublicGift:
       type: object
       description: |
         Safe public view of a gift — excludes sender PII and internal fields.
         Returned by the unauthenticated GET /api/v1/gifts/{id} endpoint.
+        Never includes `senderId`, `recipientPhoneHash`, `recipientEmail`,
+        `contractId`, or transaction hashes.
       required:
         - id
         - recipientName
@@ -1407,6 +1468,7 @@ components:
 
     ReconcileResult:
       type: object
+      description: Outcome of a Paystack reconciliation run over pending gifts.
       required: [inspected, recovered, failed, pending, deadLettered, errors, durationMs, deadLetteredTotal]
       properties:
         inspected:
@@ -1547,6 +1609,14 @@ components:
           schema:
             type: integer
           description: Seconds until the rate limit resets
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+          description: Request quota for the current window
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+          description: Requests remaining in the current window
       content:
         application/json:
           schema:
@@ -1561,6 +1631,10 @@ components:
       headers:
         X-API-Version:
           $ref: "#/components/headers/X-API-Version"
+        x-correlation-id:
+          schema:
+            type: string
+          description: Request trace ID — include in bug reports
       content:
         application/json:
           schema:
@@ -1569,3 +1643,4 @@ components:
             success: false
             error: "Internal server error"
             code: INTERNAL_ERROR
+            correlationId: "req_01HXY4Z8ABCD"

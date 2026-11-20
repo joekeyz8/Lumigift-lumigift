@@ -60,8 +60,7 @@ tags:
   - name: Cron
     description: Internal scheduler endpoints (Bearer token required)
   - name: Admin
-    description: Admin-only gift management and reporting
-    description: Admin-only gift management and audit log access
+    description: Admin-only gift management, audit log access, and moderation
   - name: Health
     description: Service health check
 
@@ -1059,105 +1058,528 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /api/v1/admin/gifts:
+  /api/v1/admin/gifts/export:
     get:
       tags: [Admin]
-      summary: List gifts with filtering and pagination (admin only)
+      summary: Export gifts as CSV
       description: |
-        Returns a paginated list of gifts. Supports filtering by status and
-        date range, plus cursor-based pagination.
-
-        Requires an admin session; non-admin requests receive 403.
-
-        Indexes used: `gifts(status)`, `gifts(createdAt)`. Cursor pagination
-        avoids OFFSET full-table scans.
+        Streams a CSV export of gifts matching the supplied filters.
+        Requires an authenticated admin session; non-admin requests receive 403.
       security:
-        - bearerAuth: []
+        - sessionCookie: []
       parameters:
-        - in: query
-          name: status
+        - name: status
+          in: query
           schema:
-            type: string
-            enum: [draft, pending_payment, funded, locked, unlocked, claimed, expired, cancelled]
+            $ref: "#/components/schemas/GiftStatus"
           description: Filter by gift status.
-        - in: query
-          name: from
+        - name: from
+          in: query
           schema:
             type: string
             format: date-time
           description: Filter gifts created at or after this ISO timestamp (inclusive).
-        - in: query
-          name: to
+        - name: to
+          in: query
           schema:
             type: string
             format: date-time
           description: Filter gifts created at or before this ISO timestamp (inclusive).
-        - in: query
-          name: search
+        - name: search
+          in: query
           schema:
             type: string
           description: Case-insensitive match on recipient name.
-        - in: query
-          name: cursor
-          schema:
-            type: string
-          description: Gift id to paginate after (next page).
-        - in: query
-          name: page
-          schema:
-            type: integer
-            minimum: 1
-            default: 1
-          description: 1-based page number.
-        - in: query
-          name: pageSize
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 25
-          description: Page size (max 100).
       responses:
         "200":
-          description: Paginated list of gifts
-          content:
-            application/json:
+          description: CSV export of matching gifts
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+            Content-Disposition:
               schema:
-                type: object
-                required: [success, data]
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    type: object
-                    required: [gifts, total, nextCursor, prevCursor, page, pageSize]
-                    properties:
-                      gifts:
-                        type: array
-                        items:
-                          $ref: "#/components/schemas/Gift"
-                      total:
-                        type: integer
-                        description: Total number of gifts matching the filters.
-                      nextCursor:
-                        type: string
-                        nullable: true
-                        description: Gift id to fetch the next page.
-                      prevCursor:
-                        type: string
-                        nullable: true
-                        description: Gift id to fetch the previous page.
-                      page:
-                        type: integer
-                      pageSize:
-                        type: integer
+                type: string
+              description: Attachment filename for the export.
+          content:
+            text/csv:
+              schema:
+                type: string
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/admin/stats:
+    get:
+      tags: [Admin]
+      summary: Get platform statistics
+      description: Returns aggregate gift and payment metrics. Requires an authenticated admin session.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Platform statistics
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AdminStats"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/admin/users:
+    get:
+      tags: [Admin]
+      summary: List users for administrators
+      description: Returns a cursor-paginated list of users. Requires an authenticated admin session.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Case-insensitive search on phone or name.
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: User ID returned as `nextCursor` by the previous page.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: User page
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AdminUserPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/admin/users/{id}:
+    get:
+      tags: [Admin]
+      summary: Get a user by ID for administrators
+      description: Returns the full user record. Requires an authenticated admin session.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: User found
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AdminUser"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/gifts/{id}/remind:
+    post:
+      tags: [Gifts]
+      summary: Send a reminder to the recipient
+      description: |
+        Sends an SMS reminder to the gift recipient. Only the sender may trigger
+        a reminder, and only for gifts in `locked` or `unlocked` status.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/GiftId"
+      responses:
+        "200":
+          description: Reminder queued
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/gifts/{id}/receipt:
+    get:
+      tags: [Gifts]
+      summary: Get a gift receipt
+      description: Returns a receipt for a claimed gift. Only the sender may access it.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/GiftId"
+      responses:
+        "200":
+          description: Gift receipt
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/GiftReceipt"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/gifts/{id}/messages:
+    get:
+      tags: [Gifts]
+      summary: List messages attached to a gift
+      description: Returns the message thread for a gift. Accessible to the sender and the recipient.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/GiftId"
+      responses:
+        "200":
+          description: Gift messages
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/GiftMessage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+    post:
+      tags: [Gifts]
+      summary: Post a message to a gift
+      description: Adds a message to the gift thread. Accessible to the sender and the recipient.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/GiftId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body:
+                  type: string
+                  minLength: 1
+                  maxLength: 1000
+      responses:
+        "201":
+          description: Message created
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/GiftMessage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/messages/{id}/report:
+    post:
+      tags: [Gifts]
+      summary: Report a gift message
+      description: Flags a message for moderation review.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Message identifier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+      responses:
+        "201":
+          description: Report created
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MessageReport"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/notifications:
+    get:
+      tags: [Auth]
+      summary: List notifications for the authenticated user
+      description: Returns the current user's notifications, newest first.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: unreadOnly
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Notification list
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Notification"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/notifications/{id}/read:
+    post:
+      tags: [Auth]
+      summary: Mark a notification as read
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Notification marked read
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/account/export:
+    get:
+      tags: [Auth]
+      summary: Request a data export
+      description: Returns the authenticated user's data as a downloadable JSON archive.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: User data export
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/account/delete:
+    post:
+      tags: [Auth]
+      summary: Request account deletion
+      description: |
+        Schedules deletion of the authenticated user's account and associated data.
+        Requires a CSRF token.
+      security:
+        - sessionCookie: []
+        - csrfToken: []
+      responses:
+        "200":
+          description: Deletion scheduled
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/cron/cleanup:
+    get:
+      tags: [Cron]
+      summary: Clean up expired sessions and stale records
+      description: Deletes expired sessions, OTPs, and other stale records. Requires `Authorization: Bearer <CRON_SECRET>`.
+      security:
+        - cronBearer: []
+      responses:
+        "200":
+          description: Cleanup run complete
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          deleted:
+                            type: integer
+                          durationMs:
+                            type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
 components:
   securitySchemes:
@@ -1181,6 +1603,13 @@ components:
       description: |
         Static secret set in the `CRON_SECRET` environment variable.
         Include as `Authorization: Bearer <CRON_SECRET>` on cron endpoint requests.
+    adminSession:
+      type: apiKey
+      in: cookie
+      name: next-auth.session-token
+      description: |
+        Admin endpoints require a valid NextAuth.js session cookie whose user
+        has the `admin` role. Non-admin sessions receive `403 FORBIDDEN`.
 
   headers:
     X-API-Version:
@@ -1431,6 +1860,114 @@ components:
         nextCursor:
           type: string
           nullable: true
+        prevCursor:
+          type: string
+          nullable: true
+        page:
+          type: integer
+        pageSize:
+          type: integer
+
+    AdminStats:
+      type: object
+      required: [totalGifts, totalVolumeNgn, claimedGifts, activeGifts]
+      properties:
+        totalGifts:
+          type: integer
+        totalVolumeNgn:
+          type: number
+        claimedGifts:
+          type: integer
+        activeGifts:
+          type: integer
+        byStatus:
+          type: object
+          additionalProperties:
+            type: integer
+
+    AdminUser:
+      type: object
+      required: [id, phone, role, createdAt]
+      properties:
+        id:
+          type: string
+        phone:
+          type: string
+          example: "+2348012345678"
+        name:
+          type: string
+          nullable: true
+        role:
+          type: string
+          enum: [user, admin]
+        createdAt:
+          type: string
+          format: date-time
+
+    AdminUserPage:
+      type: object
+      required: [users, nextCursor]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminUser"
+        nextCursor:
+          type: string
+          nullable: true
+
+    GiftReceipt:
+      type: object
+      required: [giftId, amountNgn, amountUsdc, claimedAt, txHash]
+      properties:
+        giftId:
+          type: string
+          format: uuid
+        amountNgn:
+          type: number
+        amountUsdc:
+          type: string
+        claimedAt:
+          type: string
+          format: date-time
+        txHash:
+          type: string
+
+    GiftMessage:
+      type: object
+      required: [id, giftId, senderId, body, createdAt]
+      properties:
+        id:
+          type: string
+        giftId:
+          type: string
+          format: uuid
+        senderId:
+          type: string
+        body:
+          type: string
+          maxLength: 1000
+        createdAt:
+          type: string
+          format: date-time
+
+    Notification:
+      type: object
+      required: [id, type, read, createdAt]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [gift_locked, gift_unlocked, gift_claimed, gift_expired, reminder]
+        read:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        payload:
+          type: object
+          additionalProperties: true
 
     AuditEventType:
       type: string
