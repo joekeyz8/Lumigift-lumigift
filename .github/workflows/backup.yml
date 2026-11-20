@@ -17,7 +17,8 @@ name: Database Backup
 
 on:
   schedule:
-    - cron: "30 2 * * *"    # daily at 02:30 UTC
+    - cron: "30 2 * * *"    # daily backup at 02:30 UTC
+    - cron: "0 3 1-7 * 1"   # monthly restore drill: first Monday of each month, 03:00 UTC
   workflow_dispatch:
     inputs:
       restore_drill:
@@ -111,16 +112,16 @@ jobs:
             --message "Lumigift pg_dump backup FAILED in GitHub Actions run ${{ github.run_id }} at $(date -u). Check: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --subject "⚠️ Lumigift Database Backup Failed"
 
-  # ── Quarterly restore drill ────────────────────────────────────────────────
+  # ── Monthly restore drill ──────────────────────────────────────────────────
   restore-drill:
     name: Restore verification drill
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    # Runs automatically on the first Monday of the quarter, or on-demand
+    timeout-minutes: 60
+    # Runs automatically on the first Monday of each month (cron "0 3 1-7 * 1"),
+    # or on-demand via workflow_dispatch with restore_drill=true.
     if: |
-      github.event_name == 'workflow_dispatch' && github.event.inputs.restore_drill == 'true' ||
-      (github.event_name == 'schedule' &&
-       (startsWith(github.event.schedule, '30 2') && false))
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.restore_drill == 'true') ||
+      (github.event_name == 'schedule' && github.event.schedule == '0 3 1-7 * 1')
     needs: backup
 
     steps:
@@ -170,12 +171,17 @@ jobs:
       - name: Restore dump to ephemeral database
         run: |
           set -euo pipefail
+          RESTORE_START=$(date +%s)
           pg_restore \
             --dbname="postgresql://lumigift:drill_password@localhost:5433/lumigift_drill" \
             --no-acl \
             --no-owner \
             --verbose \
             /tmp/restore.dump
+          RESTORE_END=$(date +%s)
+          RESTORE_SECONDS=$((RESTORE_END - RESTORE_START))
+          echo "Restore duration: ${RESTORE_SECONDS}s"
+          echo "restore_seconds=${RESTORE_SECONDS}" >> "$GITHUB_ENV"
 
       - name: Verify restored data meets RPO targets
         run: |
@@ -195,6 +201,18 @@ jobs:
           LATEST=$(psql "$DRILL_URL" -tAc "SELECT MAX(created_at) FROM gifts;")
           echo "Latest gift created_at: ${LATEST}"
 
+          # Verify restore time objective: RTO < 1 hour (3600s)
+          RESTORE_SECONDS="${restore_seconds:-0}"
+          RTO_LIMIT=3600
+          if [ "$RESTORE_SECONDS" -ge "$RTO_LIMIT" ]; then
+            RTO_STATUS="❌ FAILED (${RESTORE_SECONDS}s >= ${RTO_LIMIT}s)"
+            RTO_MET="false"
+          else
+            RTO_STATUS="✅ met (${RESTORE_SECONDS}s < ${RTO_LIMIT}s)"
+            RTO_MET="true"
+          fi
+          echo "RTO check: ${RTO_STATUS}"
+
           echo "## ✅ Restore drill passed" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
@@ -202,7 +220,13 @@ jobs:
           echo "| Source backup | \`${{ env.latest_key }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Gift row count | ${GIFT_COUNT} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Latest record | ${LATEST} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| RTO target met | ✅ (restore < 20 min) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Restore duration | ${RESTORE_SECONDS}s |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| RTO target (< 1 hour) | ${RTO_STATUS} |" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$RTO_MET" != "true" ]; then
+            echo "ERROR: Restore drill exceeded RTO target of ${RTO_LIMIT}s"
+            exit 1
+          fi
 
       - name: Cleanup
         if: always()
@@ -210,3 +234,13 @@ jobs:
           docker stop drill-pg || true
           docker rm drill-pg  || true
           rm -f /tmp/restore.dump
+
+      - name: Notify on drill failure via SNS (PagerDuty)
+        if: failure()
+        env:
+          SNS_TOPIC_ARN: ${{ secrets.BACKUP_SNS_TOPIC_ARN }}
+        run: |
+          aws sns publish \
+            --topic-arn "$SNS_TOPIC_ARN" \
+            --message "Lumigift restore drill FAILED in GitHub Actions run ${{ github.run_id }} at $(date -u). Check: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --subject "⚠️ Lumigift Restore Drill Failed"

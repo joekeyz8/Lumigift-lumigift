@@ -8,11 +8,16 @@
  *   3. Verifies contract instance existence on-chain
  *   4. Tests contract response to `get_state` (verifies VM execution)
  *   5. Tests contract response to `get_status`
- *   6. Produces structured smoke test report: smoke-test-report.json
+ *   6. End-to-end escrow flow (unless --skip-e2e):
+ *      a. initialize a gift with 1 USDC (10_000_000 stroops)
+ *      b. verify get_status returns Locked
+ *      c. cancel and verify funds returned to sender
+ *   7. Produces structured smoke test report: smoke-test-report.json
  *
  * Usage:
  *   STELLAR_NETWORK=testnet ts-node scripts/smoke-test-contract.ts
  *   ts-node scripts/smoke-test-contract.ts --contract-id CA... --network testnet
+ *   ts-node scripts/smoke-test-contract.ts --skip-e2e   # read-only checks only
  *
  * Exit code:
  *   0: All smoke tests passed (safe for promotion)
@@ -22,7 +27,32 @@
 import { spawnSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
-import { rpc as SorobanRpc } from "@stellar/stellar-sdk";
+import {
+  rpc as SorobanRpc,
+  Keypair,
+  Contract,
+  TransactionBuilder,
+  BASE_FEE,
+  nativeToScVal,
+  scValToNative,
+  Address,
+  xdr,
+} from "@stellar/stellar-sdk";
+
+/** Testnet USDC Stellar Asset Contract. */
+const TESTNET_USDC_CONTRACT_ID =
+  "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
+
+/** 1 USDC expressed in stroops (7 decimals). */
+const ONE_USDC_STROOPS = 10_000_000n;
+
+/** EscrowStatus enum values as defined in the contract. */
+enum EscrowStatus {
+  Locked = 0,
+  Claimed = 1,
+  Cancelled = 2,
+  Expired = 3,
+}
 
 export interface SmokeTestCheck {
   name: string;
@@ -105,6 +135,8 @@ async function runSmokeTests() {
       }
     }
   }
+
+  const skipE2e = args.includes("--skip-e2e");
 
   const checks: SmokeTestCheck[] = [];
   const reportPath = path.resolve(ROOT, "smoke-test-report.json");
@@ -309,6 +341,213 @@ async function runSmokeTests() {
       undefined,
       "Skipped due to invalid contract ID"
     );
+  }
+
+  // ─── Check 5: End-to-End Escrow Flow (initialize → get_status → cancel) ─────
+  if (skipE2e) {
+    recordCheck(
+      "End-to-End Escrow Flow (initialize/get_status/cancel)",
+      true,
+      0,
+      "Skipped via --skip-e2e (read-only run)"
+    );
+  } else if (!contractId || !/^C[A-Z2-7]{55}$/.test(contractId)) {
+    recordCheck(
+      "End-to-End Escrow Flow (initialize/get_status/cancel)",
+      false,
+      0,
+      undefined,
+      "Skipped due to invalid contract ID"
+    );
+  } else {
+    const e2eStart = Date.now();
+    const server = new SorobanRpc.Server(rpcUrl, { allowHttp: false });
+    const usdcContractId =
+      process.env.STELLAR_USDC_CONTRACT_ID ?? TESTNET_USDC_CONTRACT_ID;
+
+    const secretKey = process.env.STELLAR_SERVER_SECRET_KEY ?? "";
+    if (!secretKey) {
+      recordCheck(
+        "End-to-End Escrow Flow (initialize/get_status/cancel)",
+        false,
+        Date.now() - e2eStart,
+        undefined,
+        "STELLAR_SERVER_SECRET_KEY is required for end-to-end checks (or pass --skip-e2e)"
+      );
+    } else {
+      let sender: Keypair;
+      try {
+        sender = Keypair.fromSecret(secretKey);
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        recordCheck(
+          "End-to-End Escrow Flow (initialize/get_status/cancel)",
+          false,
+          Date.now() - e2eStart,
+          undefined,
+          `Invalid STELLAR_SERVER_SECRET_KEY: ${errorMsg}`
+        );
+        sender = Keypair.random();
+      }
+
+      const senderAddress = sender.publicKey();
+      const recipient = Keypair.random().publicKey();
+      const escrowContract = new Contract(contractId);
+      const usdcContract = new Contract(usdcContractId);
+
+      /** Read the sender's USDC balance (in stroops) via the SAC balance method. */
+      const getUsdcBalance = async (): Promise<bigint> => {
+        const account = await server.getAccount(senderAddress);
+        const tx = new TransactionBuilder(account, {
+          fee: BASE_FEE,
+          networkPassphrase,
+        })
+          .addOperation(
+            usdcContract.call(
+              "balance",
+              new Address(senderAddress).toScVal()
+            )
+          )
+          .setTimeout(30)
+          .build();
+
+        const sim = await server.simulateTransaction(tx);
+        if (SorobanRpc.Api.isSimulationError(sim)) {
+          throw new Error(`balance simulation failed: ${sim.error}`);
+        }
+        const retval = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse)
+          .result?.retval;
+        if (!retval) {
+          throw new Error("balance simulation returned no value");
+        }
+        return BigInt(scValToNative(retval) as bigint | number | string);
+      };
+
+      /** Build, sign, submit and confirm a contract invocation. */
+      const invokeAndConfirm = async (
+        operation: xdr.Operation
+      ): Promise<unknown> => {
+        const account = await server.getAccount(senderAddress);
+        const tx = new TransactionBuilder(account, {
+          fee: BASE_FEE,
+          networkPassphrase,
+        })
+          .addOperation(operation)
+          .setTimeout(60)
+          .build();
+
+        const prepared = await server.prepareTransaction(tx);
+        prepared.sign(sender);
+
+        const sendResp = await server.sendTransaction(prepared);
+        if (sendResp.status === "ERROR") {
+          throw new Error(
+            `sendTransaction failed: ${JSON.stringify(sendResp.errorResult)}`
+          );
+        }
+
+        const hash = sendResp.hash;
+        const deadline = Date.now() + 60_000;
+        while (Date.now() < deadline) {
+          const result = await server.getTransaction(hash);
+          if (result.status === SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+            return (result as SorobanRpc.Api.GetSuccessfulTransactionResponse)
+              .returnValue;
+          }
+          if (result.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
+            throw new Error(`Transaction ${hash} failed on-chain`);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 2_000));
+        }
+        throw new Error(`Timed out waiting for transaction ${hash}`);
+      };
+
+      try {
+        // ── Step 1: initialize with 1 USDC ──────────────────────────────────
+        const balanceBefore = await getUsdcBalance();
+        if (balanceBefore < ONE_USDC_STROOPS) {
+          throw new Error(
+            `Insufficient USDC balance: ${balanceBefore} stroops (need ${ONE_USDC_STROOPS})`
+          );
+        }
+
+        const initializeOp = escrowContract.call(
+          "initialize",
+          new Address(senderAddress).toScVal(),
+          new Address(recipient).toScVal(),
+          new Address(usdcContractId).toScVal(),
+          nativeToScVal(ONE_USDC_STROOPS, { type: "i128" }),
+          nativeToScVal(BigInt(Math.floor(Date.now() / 1000) + 3_600), {
+            type: "u64",
+          })
+        );
+        await invokeAndConfirm(initializeOp);
+        recordCheck(
+          "E2E: initialize with 1 USDC",
+          true,
+          Date.now() - e2eStart,
+          `Initialized escrow with ${ONE_USDC_STROOPS} stroops of USDC`
+        );
+
+        // ── Step 2: get_status must return Locked ───────────────────────────
+        const statusStart = Date.now();
+        const statusAccount = await server.getAccount(senderAddress);
+        const statusTx = new TransactionBuilder(statusAccount, {
+          fee: BASE_FEE,
+          networkPassphrase,
+        })
+          .addOperation(escrowContract.call("get_status"))
+          .setTimeout(30)
+          .build();
+        const statusSim = await server.simulateTransaction(statusTx);
+        if (SorobanRpc.Api.isSimulationError(statusSim)) {
+          throw new Error(`get_status simulation failed: ${statusSim.error}`);
+        }
+        const statusRetval = (
+          statusSim as SorobanRpc.Api.SimulateTransactionSuccessResponse
+        ).result?.retval;
+        if (!statusRetval) {
+          throw new Error("get_status returned no value");
+        }
+        const statusValue = Number(scValToNative(statusRetval));
+        if (statusValue !== EscrowStatus.Locked) {
+          throw new Error(
+            `Expected status Locked (${EscrowStatus.Locked}), got ${statusValue}`
+          );
+        }
+        recordCheck(
+          "E2E: get_status returns Locked",
+          true,
+          Date.now() - statusStart,
+          `Status = Locked (${EscrowStatus.Locked})`
+        );
+
+        // ── Step 3: cancel and verify funds returned ────────────────────────
+        const cancelStart = Date.now();
+        await invokeAndConfirm(escrowContract.call("cancel"));
+        const balanceAfter = await getUsdcBalance();
+        if (balanceAfter !== balanceBefore) {
+          throw new Error(
+            `Funds not returned: balance before=${balanceBefore}, after=${balanceAfter}`
+          );
+        }
+        recordCheck(
+          "E2E: cancel returns funds to sender",
+          true,
+          Date.now() - cancelStart,
+          `USDC balance restored to ${balanceAfter} stroops`
+        );
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        recordCheck(
+          "End-to-End Escrow Flow (initialize/get_status/cancel)",
+          false,
+          Date.now() - e2eStart,
+          undefined,
+          errorMsg
+        );
+      }
+    }
   }
 
   // ─── Generate Summary & Report ──────────────────────────────────────────────

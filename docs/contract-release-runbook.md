@@ -15,6 +15,7 @@ and mainnet release.
 3. [Testnet deployment](#3-testnet-deployment)
 4. [Mainnet deployment](#4-mainnet-deployment)
 5. [Post-deployment verification](#5-post-deployment-verification)
+5a. [Smoke test](#5a-smoke-test)
 6. [Recording IDs and hashes](#6-recording-ids-and-hashes)
 7. [In-place upgrade (no state migration)](#7-in-place-upgrade-no-state-migration)
 8. [Breaking-change migration](#8-breaking-change-migration)
@@ -154,6 +155,70 @@ stellar contract info \
 ```
 
 Confirm the `wasm_hash` in the output matches the SHA-256 you recorded in §2.
+
+Then run the automated smoke test (see §5a) to exercise the critical contract
+paths end-to-end. A passing smoke test is required before any mainnet
+promotion.
+
+---
+
+## 5a. Smoke test
+
+`scripts/smoke-test-contract.ts` exercises the critical contract paths with
+minimal amounts (1 USDC) on testnet. Run it after every testnet deployment and
+again after any in-place upgrade, before promoting to mainnet.
+
+### Required environment variables
+
+| Variable                     | Value / purpose                                   |
+| ---------------------------- | ------------------------------------------------- |
+| `STELLAR_NETWORK`            | `testnet` (the smoke test refuses to run on mainnet) |
+| `STELLAR_ESCROW_CONTRACT_ID` | Contract ID from `.contract-ids.json`             |
+| `STELLAR_SERVER_SECRET_KEY`  | Funded testnet key (56-char base32 starting with `S`) |
+| `STELLAR_RPC_URL`            | `https://soroban-testnet.stellar.org`             |
+
+### Command
+
+```bash
+STELLAR_NETWORK=testnet \
+STELLAR_ESCROW_CONTRACT_ID=<TESTNET_CONTRACT_ID> \
+STELLAR_SERVER_SECRET_KEY=<testnet-secret> \
+STELLAR_RPC_URL=https://soroban-testnet.stellar.org \
+npm run contract:smoke-test
+```
+
+### Checks performed
+
+1. **Initialize with 1 USDC** — calls `initialize` with a 1 USDC (10,000,000
+   stroops) escrow and confirms the transaction succeeds.
+2. **Status is `Locked`** — calls `get_status` and asserts the returned status
+   is `Locked`.
+3. **Cancel returns funds** — calls `cancel`, then verifies the sender's USDC
+   balance is restored (funds returned).
+
+### Expected output
+
+```
+🧪 Smoke test against testnet contract C...
+✅ initialize: 1 USDC escrow created
+✅ get_status: Locked
+✅ cancel: funds returned to sender
+📄 Report written to smoke-test-report.json
+🎉 Smoke test passed
+```
+
+### Artifact
+
+A machine-readable `smoke-test-report.json` is written to the repository root
+containing the contract ID, network, timestamps, per-check results, and
+transaction hashes. Attach it to the release record (§6).
+
+### Failure handling
+
+The script exits with a **non-zero exit code** if any check fails (wrong
+status, missing funds, RPC error, or invalid configuration). A non-zero exit
+**blocks mainnet promotion** — do not proceed to §4 until the smoke test
+passes cleanly.
 
 ---
 

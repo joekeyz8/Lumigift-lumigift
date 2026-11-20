@@ -74,6 +74,10 @@ jest-worker-*
 # ── Rust / Cargo ──────────────────────────────────────────────────────────────
 contracts/target/
 
+# Cargo.lock MUST be committed for reproducible contract builds (#542).
+# Explicitly negate any ignore rule so the lockfile is always tracked.
+!contracts/Cargo.lock
+
 # ── Misc ──────────────────────────────────────────────────────────────────────
 *.tsbuildinfo
 next-env.d.ts

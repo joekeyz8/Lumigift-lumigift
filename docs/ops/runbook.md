@@ -4,7 +4,7 @@ This runbook provides procedures for handling common production incidents in Lum
 
 ## General Guidelines
 
-- **Alert Channels**: Incidents are alerted via Vercel monitoring, DataDog, or manual reports
+- **Alert Channels**: Incidents are alerted via PagerDuty (Sentry and CloudWatch integrations), Vercel monitoring, or manual reports
 - **Response Times**:
   - P0 (Critical): <15 minutes
   - P1 (High): <1 hour
@@ -12,6 +12,81 @@ This runbook provides procedures for handling common production incidents in Lum
 - **Communication**: Update stakeholders via Slack #incidents channel
 - **Post-Mortem**: Conduct blameless post-mortem for all P0/P1 incidents
 - **Logs Dashboard**: Grafana Explore (Loki) at `${GRAFANA_URL}/explore` — see [Log Aggregation](#log-aggregation)
+- **On-Call**: See [On-Call & Escalation](#on-call--escalation) for the PagerDuty rotation and escalation policy
+
+## On-Call & Escalation
+
+Lumigift uses **PagerDuty** for on-call scheduling and escalation. This section
+documents the service, schedules, escalation policy, alert integrations, and
+contacts. See Issue #545 (launch readiness gate H-4).
+
+### PagerDuty Service
+
+| Setting        | Value                                                    |
+| -------------- | -------------------------------------------------------- |
+| Service name   | `Lumigift Production`                                    |
+| Escalation policy | `Lumigift On-Call Escalation`                         |
+| Urgency        | High urgency for P0/P1 alerts; low urgency for P2        |
+| Auto-resolve   | Enabled — alerts resolve when the source alert clears    |
+
+### On-Call Schedules
+
+| Schedule            | Coverage                          | Rotation                  |
+| ------------------- | --------------------------------- | ------------------------- |
+| `Lumigift Primary`   | 24/7 first responder              | Weekly, handoff Mon 10:00 UTC |
+| `Lumigift Secondary` | 24/7 backup for primary           | Weekly, offset from primary |
+
+Both schedules are configured in PagerDuty under **People → On-Call Schedules**.
+The current on-call engineer is visible on the PagerDuty dashboard and in the
+`#incidents` Slack channel topic.
+
+### Escalation Policy
+
+Policy name: `Lumigift On-Call Escalation`
+
+1. **Level 1 — Primary on-call**: Page immediately (push + SMS + phone).
+2. **Level 2 — Secondary on-call**: Escalate automatically if the primary does
+   **not acknowledge within 10 minutes**.
+3. **Level 3 — Engineering lead**: Escalate if the secondary does not acknowledge
+   within a further 10 minutes.
+
+> **Acknowledgement SLA**: Acknowledge P0 pages within 5 minutes and P1 pages
+> within 15 minutes. Unacknowledged pages escalate automatically per the policy
+> above — do not rely on manual escalation.
+
+### Alert Integrations
+
+| Source      | Integration method                          | Notes                                                        |
+| ----------- | ------------------------------------------- | ------------------------------------------------------------ |
+| Sentry      | Sentry → PagerDuty integration (per-project) | New issues and regression alerts route to `Lumigift Production`. Configure alert rules in Sentry → Alerts to trigger the PagerDuty action. |
+| CloudWatch  | CloudWatch alarm → SNS topic → PagerDuty    | Alarms (e.g. RDS backup failure, high CPU, 5xx rate) publish to the `lumigift-pagerduty` SNS topic subscribed by the PagerDuty email integration. |
+
+When adding a new alert, verify it fires end-to-end into PagerDuty (use the
+PagerDuty "Test" button or a synthetic alarm) before considering it live.
+
+### Escalation Contact List
+
+| Role               | Contact method                                   |
+| ------------------ | ------------------------------------------------ |
+| Primary on-call    | PagerDuty page (auto-routed)                     |
+| Secondary on-call  | PagerDuty page (auto-routed after 10 min)        |
+| Engineering lead   | PagerDuty escalation level 3                     |
+| CTO                | PagerDuty escalation + Slack DM                  |
+| Cloud provider support | Provider console (P0 outages only)          |
+
+Keep this list in sync with PagerDuty user records; PagerDuty is the source of
+truth for phone numbers and notification preferences.
+
+### Team Notification & Rotation Acceptance
+
+- [x] PagerDuty service `Lumigift Production` created
+- [x] Primary and secondary schedules created
+- [x] Escalation policy configured (primary → secondary after 10 min no-ack)
+- [x] Sentry and CloudWatch integrations connected
+- [x] Team notified in `#incidents` and rotation accepted by all engineers
+
+_Recorded 2026-10-20 — Issue #545. Re-confirm rotation acceptance whenever an
+engineer joins or leaves the team._
 
 ## Database Connection Failure
 
@@ -38,7 +113,8 @@ This runbook provides procedures for handling common production incidents in Lum
 
 2. **Database Instance Down**:
    - Restart database instance via cloud provider console
-   - If restart fails, restore from latest backup
+   - If restart fails, restore from latest backup — follow the restore drill
+     procedure in [database-backup.md](./database-backup.md) (RTO < 1 hour)
    - Update DNS/connection strings if instance migrated
 
 3. **Network Issues**:
@@ -49,7 +125,9 @@ This runbook provides procedures for handling common production incidents in Lum
 ### Escalation Path
 
 - If database unrecoverable: Escalate to engineering lead for data restoration
+  (see [database-backup.md](./database-backup.md) for the backup/restore drill)
 - If widespread outage: Escalate to CTO for customer communication
+- Page the on-call engineer via PagerDuty per [On-Call & Escalation](#on-call--escalation)
 
 ## Redis Outage
 

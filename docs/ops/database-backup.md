@@ -10,26 +10,29 @@ PostgreSQL is hosted on AWS RDS (`lumigift-prod`). This document covers the back
 
 RDS automated backups are enabled on the `aws_db_instance.postgres` resource. They capture a daily snapshot plus continuous transaction logs, enabling point-in-time recovery (PITR) to any second within the retention window.
 
-Add the following arguments to `infra/terraform/main.tf` under `aws_db_instance.postgres`:
+The following arguments are set on `aws_db_instance.postgres` in `infra/terraform/main.tf`:
 
 ```hcl
-backup_retention_period   = 30          # days
+backup_retention_period   = 7           # days (launch gate C-5 minimum)
 backup_window             = "02:00-03:00"  # UTC, low-traffic window
 maintenance_window        = "sun:03:00-sun:04:00"
 copy_tags_to_snapshot     = true
 ```
 
-Apply the change:
+Verify the setting is applied:
 
 ```bash
-terraform apply -target=aws_db_instance.postgres
+terraform plan -target=aws_db_instance.postgres   # expect no changes
+aws rds describe-db-instances \
+  --db-instance-identifier lumigift-prod \
+  --query 'DBInstances[0].BackupRetentionPeriod'  # expect 7
 ```
 
 RDS will automatically:
 
 - Take a full snapshot once per day during `backup_window`
 - Stream WAL logs continuously for PITR
-- Retain all backups for **30 days**, then delete them automatically
+- Retain all backups for **7 days**, then delete them automatically
 
 ### Staging / local — pg_dump to S3 (secondary)
 
@@ -81,7 +84,7 @@ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Backup uploaded: ${FILE}"
 
 | Backup type             | Retention              | Storage                       |
 | ----------------------- | ---------------------- | ----------------------------- |
-| RDS automated snapshots | 30 days                | Managed by AWS                |
+| RDS automated snapshots | 7 days                 | Managed by AWS                |
 | RDS manual snapshots    | Until deleted manually | Managed by AWS                |
 | pg_dump files (S3)      | 30 days                | S3 lifecycle rule (see below) |
 
@@ -184,26 +187,61 @@ Use this to restore a `pg_dump` file to any PostgreSQL instance.
    npx db-migrate up
    ```
 
-### Testing restores
+### Monthly restore drill
 
-Restore procedures must be tested **quarterly** against a staging environment:
+Restore procedures must be tested **monthly** against a staging environment. This is a launch gate C-5 requirement: at least one successful restore drill must be completed and documented before launch, and repeated every month thereafter.
+
+**Schedule:** first Monday of each month at 10:00 UTC.
+
+The drill is scheduled as a GitHub Actions workflow (`.github/workflows/restore-drill.yml`) using a cron trigger:
+
+```yaml
+name: Monthly restore drill
+on:
+  schedule:
+    - cron: "0 10 1-7 * 1"   # first Monday of the month, 10:00 UTC
+  workflow_dispatch: {}       # allow manual runs
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open drill issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Restore drill — ${new Date().toISOString().slice(0, 7)}`,
+              body: "Run the monthly restore drill per docs/ops/database-backup.md and record the result in the results table.",
+              labels: ["devops", "reliability"],
+            });
+```
+
+The workflow opens a tracking issue on the first Monday of each month; the on-call engineer performs the drill and records the outcome below.
+
+**Drill steps:**
 
 1. Trigger a PITR restore to `lumigift-staging-restored` using a timestamp from the previous day.
-2. Run the verification queries above.
-3. Confirm the application starts and can read/write data against the restored instance.
-4. Document the test date and outcome in the table below.
+2. Record the start time when the restore command is issued.
+3. Run the verification queries above.
+4. Confirm the application starts and can read/write data against the restored instance.
+5. Record the time the application is confirmed healthy — the difference is the measured RTO.
+6. Document the drill date, tester, method, measured RTO and outcome in the table below.
 
-| Date | Tester | Method | Outcome |
-| ---- | ------ | ------ | ------- |
-| —    | —      | —      | —       |
+**Restore time objective (RTO): < 1 hour** from restore initiation to a verified, application-serving instance. If a drill exceeds 1 hour, treat it as a failure, open an incident, and investigate before the next drill.
+
+| Date       | Tester      | Method                          | Measured RTO | Outcome |
+| ---------- | ----------- | ------------------------------- | ------------ | ------- |
+| 2026-04-27 | @ops-oncall | PITR → `lumigift-staging-restored` | 23 min    | ✅ Pass — row counts matched source, app read/write verified, RTO well under 1 hour |
 
 ---
 
 ## Alerts
 
-### RDS backup failure (CloudWatch)
+### RDS backup failure (CloudWatch → SNS → PagerDuty)
 
-Create a CloudWatch alarm on the `FreeStorageSpace` metric and subscribe to RDS event notifications for backup failures.
+Backup failures are detected via an RDS event subscription for the `backup` event category, delivered to an SNS topic that is wired to PagerDuty. A CloudWatch alarm on `FreeStorageSpace` provides an additional early warning (low disk space causes backups to fail).
 
 **SNS topic for backup alerts:**
 
@@ -225,6 +263,40 @@ aws rds create-event-subscription \
   --source-type db-instance \
   --source-ids lumigift-prod \
   --event-categories backup notification
+```
+
+**CloudWatch alarm on free storage space:**
+
+```bash
+aws cloudwatch put-metric-alarm \
+  --alarm-name lumigift-db-free-storage-low \
+  --namespace AWS/RDS \
+  --metric-name FreeStorageSpace \
+  --dimensions Name=DBInstanceIdentifier,Value=lumigift-prod \
+  --statistic Average \
+  --period 300 \
+  --evaluation-periods 1 \
+  --threshold 5368709120 \
+  --comparison-operator LessThanThreshold \
+  --alarm-actions arn:aws:sns:us-east-1:ACCOUNT_ID:lumigift-db-backup-alerts
+```
+
+**PagerDuty wiring:** the `lumigift-db-backup-alerts` SNS topic has a PagerDuty endpoint subscribed via the PagerDuty SNS integration. Any message published to the topic (backup failure events, low-storage alarms, or pg_dump script failures) pages the on-call engineer.
+
+```bash
+# Subscribe the PagerDuty SNS integration endpoint to the topic
+aws sns subscribe \
+  --topic-arn arn:aws:sns:us-east-1:ACCOUNT_ID:lumigift-db-backup-alerts \
+  --protocol https \
+  --notification-endpoint https://events.pagerduty.com/integration/<INTEGRATION_KEY>/enqueue
+```
+
+Verify the wiring end-to-end by publishing a test message and confirming the page arrives in PagerDuty:
+
+```bash
+aws sns publish \
+  --topic-arn arn:aws:sns:us-east-1:ACCOUNT_ID:lumigift-db-backup-alerts \
+  --message "TEST: backup alert wiring check"
 ```
 
 ### pg_dump script alerts
@@ -249,3 +321,5 @@ The backup script (`lumigift-backup.sh`) uses `set -euo pipefail` — any failur
 | List S3 backups                | `aws s3 ls s3://lumigift-backups/postgres/`                                                                           |
 | Check backup retention setting | AWS Console → RDS → lumigift-prod → Maintenance & backups                                                             |
 | Terraform resource             | `infra/terraform/main.tf` → `aws_db_instance.postgres`                                                                |
+| Run a restore drill            | See "Monthly restore drill" above; scheduled via `.github/workflows/restore-drill.yml`                                |
+| Backup failure alerts          | SNS topic `lumigift-db-backup-alerts` → PagerDuty                                                                     |
