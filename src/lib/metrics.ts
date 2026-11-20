@@ -200,3 +200,100 @@ export function recordStatusTransition(
     "[gift] status changed"
   );
 }
+
+// ── Contract TTL keeper metrics ───────────────────────────────────────────────
+
+/**
+ * Emits a structured warning and captures a Sentry message when a contract's
+ * instance storage TTL drops below the safety buffer (7 days). This is the
+ * signal that fires the on-call alert for the TTL keeper service.
+ *
+ * @param job              - Identifier for the keeper job, e.g. "cron/ttl-keeper".
+ * @param contractId       - The escrow contract ID whose TTL is low.
+ * @param remainingLedgers - Remaining TTL in ledgers.
+ * @param remainingDays    - Remaining TTL converted to days (approx).
+ */
+export function recordTtlAlert(
+  job: string,
+  contractId: string,
+  remainingLedgers: number,
+  remainingDays: number
+): void {
+  logger.warn(
+    {
+      metric: "ttl.alert",
+      job,
+      contractId,
+      remainingLedgers,
+      remainingDays,
+      status: "below_buffer",
+    },
+    "[ttl] contract TTL below safety buffer"
+  );
+
+  Sentry.withScope((scope) => {
+    scope.setTag("metric", "ttl.alert");
+    scope.setTag("job", job);
+    scope.setExtra("contractId", contractId);
+    scope.setExtra("remainingLedgers", remainingLedgers);
+    scope.setExtra("remainingDays", remainingDays);
+    Sentry.captureMessage(
+      `Contract TTL below 7-day buffer (${remainingDays.toFixed(2)} days remaining)`,
+      "warning"
+    );
+  });
+}
+
+/**
+ * Records the outcome of a daily TTL keeper run, including how many contracts
+ * were extended, how many failed, and the total XLM fee spent. The fee is
+ * tracked so keeper costs can be budgeted and monitored over time.
+ *
+ * @param job        - Identifier for the keeper job, e.g. "cron/ttl-keeper".
+ * @param durationMs - Elapsed time in milliseconds.
+ * @param data       - Safe counters: contractsChecked, contractsExtended,
+ *                     contractsFailed, totalFeeXlm (no PII).
+ */
+export function recordTtlKeeperRun(
+  job: string,
+  durationMs: number,
+  data: {
+    contractsChecked: number;
+    contractsExtended: number;
+    contractsFailed: number;
+    totalFeeXlm: number;
+  }
+): void {
+  const status = data.contractsFailed > 0 ? "partial" : "success";
+  const log = status === "success" ? logger.info.bind(logger) : logger.warn.bind(logger);
+
+  log(
+    {
+      metric: "ttl.keeper_run",
+      job,
+      status,
+      durationMs,
+      contractsChecked: data.contractsChecked,
+      contractsExtended: data.contractsExtended,
+      contractsFailed: data.contractsFailed,
+      totalFeeXlm: data.totalFeeXlm,
+    },
+    status === "success" ? "[ttl] keeper run ok" : "[ttl] keeper run completed with failures"
+  );
+
+  if (data.contractsFailed > 0) {
+    Sentry.withScope((scope) => {
+      scope.setTag("metric", "ttl.keeper_run");
+      scope.setTag("job", job);
+      scope.setExtra("contractsChecked", data.contractsChecked);
+      scope.setExtra("contractsExtended", data.contractsExtended);
+      scope.setExtra("contractsFailed", data.contractsFailed);
+      scope.setExtra("totalFeeXlm", data.totalFeeXlm);
+      scope.setExtra("durationMs", durationMs);
+      Sentry.captureMessage(
+        `TTL keeper: ${data.contractsFailed} contract(s) failed to extend`,
+        "error"
+      );
+    });
+  }
+}

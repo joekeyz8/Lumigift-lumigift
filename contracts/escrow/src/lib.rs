@@ -490,6 +490,29 @@ impl EscrowContract {
         }
     }
 
+    /// Permissionless keeper entrypoint: extend the contract instance TTL.
+    ///
+    /// Anyone (the platform backend, a third-party keeper, or the recipient)
+    /// may call this to bump the instance TTL before it expires, without
+    /// needing to claim. `extend_ttl` is a no-op when the current TTL is
+    /// already ≥ `threshold`, so it is safe and cheap to call repeatedly.
+    ///
+    /// Emits a `ttl_extended` event so off-chain keepers can track successes.
+    pub fn extend_ttl(env: Env, threshold: u32, new_ttl: u32) -> Result<(), EscrowError> {
+        if !env.storage().instance().has(&DataKey::Sender) {
+            return Err(EscrowError::NotInitialized);
+        }
+
+        env.storage().instance().extend_ttl(threshold, new_ttl);
+
+        env.events().publish(
+            (Symbol::new(&env, "ttl_extended"),),
+            (threshold, new_ttl),
+        );
+
+        Ok(())
+    }
+
     /// Upgrade the contract WASM. Restricted to the admin address stored at initialization.
     ///
     /// Emits an `upgraded` event containing the new WASM hash so off-chain
@@ -796,6 +819,49 @@ mod tests {
             .unwrap_err()
             .unwrap();
         assert_eq!(err, EscrowError::InvalidUnlockTime);
+    }
+
+    #[test]
+    fn test_extend_ttl_extends_instance_ttl() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let (token_id, _, token_admin) = create_token(&env, &sender);
+        token_admin.mint(&sender, &100_000_000);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let client = EscrowContractClient::new(&env, &contract_id);
+
+        // Short lock so the initial TTL is small and can drift below threshold.
+        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &3_601);
+
+        // Advance the ledger far enough that the instance TTL drops below the
+        // keeper threshold (7-day buffer).
+        env.ledger().with_mut(|l| l.sequence_number += MIN_TTL_THRESHOLD as u32 + 1);
+
+        // Keeper call: extend to cover the full lock period plus buffer.
+        let new_ttl = required_ttl_ledgers(&env, 3_601);
+        client.extend_ttl(&MIN_TTL_THRESHOLD, &new_ttl);
+
+        // The contract must still be readable and in the Locked state.
+        assert_eq!(client.get_status(), EscrowStatus::Locked);
+    }
+
+    #[test]
+    fn test_extend_ttl_not_initialized_returns_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let client = EscrowContractClient::new(&env, &contract_id);
+
+        let err = client
+            .try_extend_ttl(&MIN_TTL_THRESHOLD, &BUFFER_LEDGERS)
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, EscrowError::NotInitialized);
     }
 
     #[test]

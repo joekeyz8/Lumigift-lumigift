@@ -237,6 +237,76 @@ export class EscrowClient {
     return decodeGetStatusResult(returnVal);
   }
 
+  // ── extend_ttl ───────────────────────────────────────────────────────────────
+
+  /**
+   * Builds an `extend_ttl` transaction envelope ready to be signed and submitted.
+   *
+   * Extends the TTL of the contract instance (and its persistent entries) so
+   * that long-lived escrows are not archived by the Soroban state expiry
+   * mechanism. Intended to be called by the TTL keeper service.
+   *
+   * @param thresholdLedgers - Only extend if the current TTL is below this many ledgers
+   * @param newTtlLedgers    - Target TTL (in ledgers) after extension
+   */
+  async extendTtl(thresholdLedgers: number, newTtlLedgers: number): Promise<string> {
+    const account = await this.rpc.getAccount(this.opts.sourcePublicKey);
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.opts.networkPassphrase,
+    })
+      .addOperation(
+        this.contract.call(
+          "extend_ttl",
+          nativeToScVal(thresholdLedgers, { type: "u32" }),
+          nativeToScVal(newTtlLedgers, { type: "u32" })
+        )
+      )
+      .setTimeout(30)
+      .build();
+
+    const simResult = await this.rpc.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(simResult)) {
+      throw parseContractError(simResult.error);
+    }
+
+    return SorobanRpc.assembleTransaction(tx, simResult).build().toXDR();
+  }
+
+  // ── getTtl ───────────────────────────────────────────────────────────────────
+
+  /**
+   * Returns the remaining TTL (in ledgers) of the contract instance entry.
+   *
+   * Reads the contract instance ledger entry via Soroban RPC `getLedgerEntries`
+   * and computes `liveUntilLedgerSeq - currentLedgerSeq`. The keeper uses this
+   * to decide whether to call {@link extendTtl} and to raise an alert when the
+   * remaining TTL drops below the 7-day safety buffer.
+   */
+  async getTtl(): Promise<number> {
+    const instanceKey = xdr.LedgerKey.contractData(
+      new xdr.LedgerKeyContractData({
+        contract: new Address(this.opts.contractId).toScAddress(),
+        key: xdr.ScVal.scvLedgerKeyContractInstance(),
+        durability: xdr.ContractDataDurability.persistent(),
+      })
+    );
+
+    const response = await this.rpc.getLedgerEntries(instanceKey);
+    const entry = response.entries?.[0];
+    if (!entry) {
+      throw new Error(`Contract instance entry not found for ${this.opts.contractId}`);
+    }
+
+    const liveUntilLedgerSeq = entry.liveUntilLedgerSeq;
+    if (liveUntilLedgerSeq === undefined) {
+      throw new Error(`Contract instance entry has no liveUntilLedgerSeq for ${this.opts.contractId}`);
+    }
+
+    return Number(liveUntilLedgerSeq) - Number(response.latestLedger);
+  }
+
   // ── submitTransaction ────────────────────────────────────────────────────────
 
   /**

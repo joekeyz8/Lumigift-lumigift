@@ -233,9 +233,50 @@ export async function findGiftById(id: string): Promise<Gift | null> {
  * @returns Array of {@link Gift} domain objects (may be empty).
  */
 export async function findGiftsBySender(senderId: string): Promise<Gift[]> {
+  // Uses idx_gifts_sender_created (migration 0010) for the sender_id filter + created_at ordering.
   const { rows } = await readPool.query<GiftDbRow>(
     `SELECT * FROM gifts WHERE sender_id = $1 ORDER BY created_at DESC`,
     [senderId]
+  );
+  return rows.map(rowToGift);
+}
+
+/**
+ * Looks up all gifts for a given sender filtered by status, newest first.
+ *
+ * Backs the dashboard gift list; benefits from the composite
+ * `(sender_id, status)` index added in migration 0010.
+ *
+ * @param senderId - User ID of the sender.
+ * @param status - Gift status to filter on.
+ * @returns Array of {@link Gift} domain objects (may be empty).
+ */
+export async function findGiftsBySenderAndStatus(
+  senderId: string,
+  status: GiftStatus
+): Promise<Gift[]> {
+  // Uses idx_gifts_sender_status_created (migration 0010) — composite (sender_id, status).
+  const { rows } = await readPool.query<GiftDbRow>(
+    `SELECT * FROM gifts WHERE sender_id = $1 AND status = $2 ORDER BY created_at DESC`,
+    [senderId, status]
+  );
+  return rows.map(rowToGift);
+}
+
+/**
+ * Looks up all locked gifts whose unlock time has passed, oldest unlock first.
+ *
+ * Used by the unlock scheduler; benefits from the composite
+ * `(unlock_at, status)` index added in migration 0010.
+ *
+ * @param now - Reference timestamp (defaults to the current time).
+ * @returns Array of {@link Gift} domain objects (may be empty).
+ */
+export async function findGiftsDueForUnlock(now: Date = new Date()): Promise<Gift[]> {
+  // Uses idx_gifts_unlock_at_status (migration 0010) — composite (unlock_at, status).
+  const { rows } = await readPool.query<GiftDbRow>(
+    `SELECT * FROM gifts WHERE unlock_at <= $1 AND status = 'locked' ORDER BY unlock_at ASC`,
+    [now]
   );
   return rows.map(rowToGift);
 }

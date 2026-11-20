@@ -30,6 +30,14 @@ import {
   CURSOR_GENESIS,
   type FetchEventsResult,
 } from "@/lib/contracts/escrow-events";
+import {
+  runTtlKeeper,
+  TTL_KEEPER_LOOKAHEAD_SECONDS,
+  TTL_ALERT_BUFFER_SECONDS,
+  type TtlKeeperGift,
+  type TtlKeeperLogger,
+  type TtlKeeperMetrics,
+} from "@/lib/contracts/ttl-keeper";
 
 // ─── Stellar SDK mock ─────────────────────────────────────────────────────────
 // We mock the stellar-sdk at the module level so EscrowClient never dials the
@@ -40,6 +48,7 @@ const mockGetAccount = jest.fn();
 const mockSendTransaction = jest.fn();
 const mockGetTransaction = jest.fn();
 const mockGetEvents = jest.fn();
+const mockGetLedgerEntries = jest.fn();
 
 jest.mock("@stellar/stellar-sdk", () => {
   const actual = jest.requireActual("@stellar/stellar-sdk");
@@ -50,6 +59,7 @@ jest.mock("@stellar/stellar-sdk", () => {
     sendTransaction = mockSendTransaction;
     getTransaction = mockGetTransaction;
     getEvents = mockGetEvents;
+    getLedgerEntries = mockGetLedgerEntries;
   }
 
   class MockContract {
@@ -559,5 +569,261 @@ describe("fetchEscrowEvents — Issue #121", () => {
     expect(result.events[0].type).toBe("initialized");
     expect(result.events[1].type).toBe("claimed");
     expect(result.latestCursor).toBe("0000000010-0000000002");
+  });
+});
+
+// ─── TTL keeper — Issue #531 ──────────────────────────────────────────────────
+
+const DAY_SECONDS = 86_400;
+
+describe("EscrowClient.extendTtl — Issue #531", () => {
+  const MOCK_HASH = "deadbeef1234567890deadbeef1234567890deadbeef1234567890deadbeef";
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    stubAccount();
+  });
+
+  /**
+   * Build a getLedgerEntries fixture for a contract instance whose remaining
+   * TTL (in ledgers) is `remainingLedgers`. Soroban encodes the liveUntilLedger
+   * as a u32 inside the entry's `liveUntilLedgerSeq` field.
+   */
+  function makeInstanceEntry(remainingLedgers: number) {
+    const currentLedger = 1_000_000;
+    return {
+      entries: [
+        {
+          key: { type: "contractData" },
+          val: { type: "contractInstance" },
+          liveUntilLedgerSeq: currentLedger + remainingLedgers,
+        },
+      ],
+      latestLedger: currentLedger,
+    };
+  }
+
+  it("builds an extend_ttl transaction with the expected threshold and new TTL", async () => {
+    // Instance TTL is below the 7-day buffer → keeper must extend it.
+    mockGetLedgerEntries.mockResolvedValue(makeInstanceEntry(DAY_SECONDS / 5));
+    mockSimulateTransaction.mockResolvedValue(makeSimSuccess(null));
+
+    const client = makeClient();
+    const threshold = 7 * DAY_SECONDS;
+    const newTtl = 30 * DAY_SECONDS;
+
+    const xdr = await client.extendTtl(threshold, newTtl);
+
+    expect(typeof xdr).toBe("string");
+    expect(xdr.length).toBeGreaterThan(0);
+
+    // The contract call must be extend_ttl with (threshold, newTtl) args.
+    const contractCall = (client as unknown as { contract: { call: jest.Mock } }).contract;
+    expect(contractCall.call).toHaveBeenCalledWith("extend_ttl", threshold, newTtl);
+  });
+
+  it("extends the mocked TTL above the threshold after submission", async () => {
+    const threshold = 7 * DAY_SECONDS;
+    const newTtl = 30 * DAY_SECONDS;
+
+    // Start with a TTL that has already dropped below the 7-day buffer.
+    let remaining = DAY_SECONDS / 5;
+    mockGetLedgerEntries.mockImplementation(async () => makeInstanceEntry(remaining));
+    mockSimulateTransaction.mockResolvedValue(makeSimSuccess(null));
+    mockSendTransaction.mockResolvedValue({ status: "PENDING", hash: MOCK_HASH });
+    mockGetTransaction.mockImplementation(async () => {
+      // Simulate the on-chain effect of extend_ttl: TTL jumps to newTtl.
+      remaining = newTtl;
+      return { status: "SUCCESS" };
+    });
+
+    const client = makeClient();
+    const before = await client.getRemainingTtl();
+    expect(before).toBeLessThan(threshold);
+
+    const xdr = await client.extendTtl(threshold, newTtl);
+    await client.submitTransaction(xdr);
+
+    const after = await client.getRemainingTtl();
+    expect(after).toBeGreaterThanOrEqual(threshold);
+    expect(after).toBe(newTtl);
+  });
+
+  it("is diagnosable: surfaces RPC failures during TTL lookup", async () => {
+    mockGetLedgerEntries.mockRejectedValue(new Error("getLedgerEntries: node unavailable"));
+
+    await expect(makeClient().extendTtl(7 * DAY_SECONDS, 30 * DAY_SECONDS)).rejects.toThrow(
+      "getLedgerEntries"
+    );
+  });
+});
+
+describe("runTtlKeeper — Issue #531", () => {
+  const NOW = 1_700_000_000; // fixed clock (seconds)
+
+  function makeLogger(): TtlKeeperLogger & {
+    info: jest.Mock;
+    warn: jest.Mock;
+    error: jest.Mock;
+  } {
+    return { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+  }
+
+  function makeMetrics(): TtlKeeperMetrics & {
+    increment: jest.Mock;
+    gauge: jest.Mock;
+  } {
+    return { increment: jest.fn(), gauge: jest.fn() };
+  }
+
+  function makeGift(overrides: Partial<TtlKeeperGift> = {}): TtlKeeperGift {
+    return {
+      contractId: "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+      unlockTime: NOW + 60 * DAY_SECONDS, // well beyond the 20-day lookahead
+      remainingTtlSeconds: 30 * DAY_SECONDS,
+      ...overrides,
+    };
+  }
+
+  it("selects only gifts with unlock_time > NOW() + 20 days", async () => {
+    const soon = makeGift({
+      contractId: "CSOON00000000000000000000000000000000000000000000000000000000",
+      unlockTime: NOW + 10 * DAY_SECONDS, // inside the 20-day window → skipped
+    });
+    const longLived = makeGift({
+      contractId: "CLONG00000000000000000000000000000000000000000000000000000000",
+      unlockTime: NOW + 60 * DAY_SECONDS,
+    });
+
+    const extendTtl = jest.fn().mockResolvedValue("XDR==");
+    const submitTransaction = jest.fn().mockResolvedValue("hash");
+    const logger = makeLogger();
+    const metrics = makeMetrics();
+
+    const result = await runTtlKeeper({
+      now: () => NOW,
+      listGifts: async () => [soon, longLived],
+      extendTtl,
+      submitTransaction,
+      logger,
+      metrics,
+    });
+
+    expect(TTL_KEEPER_LOOKAHEAD_SECONDS).toBe(20 * DAY_SECONDS);
+    expect(extendTtl).toHaveBeenCalledTimes(1);
+    expect(extendTtl).toHaveBeenCalledWith(
+      longLived.contractId,
+      expect.any(Number),
+      expect.any(Number)
+    );
+    expect(submitTransaction).toHaveBeenCalledTimes(1);
+    expect(result.extended).toEqual([longLived.contractId]);
+    expect(result.skipped).toEqual([soon.contractId]);
+  });
+
+  it("logs a success line for each extended contract", async () => {
+    const gift = makeGift();
+    const extendTtl = jest.fn().mockResolvedValue("XDR==");
+    const submitTransaction = jest.fn().mockResolvedValue("hash");
+    const logger = makeLogger();
+
+    await runTtlKeeper({
+      now: () => NOW,
+      listGifts: async () => [gift],
+      extendTtl,
+      submitTransaction,
+      logger,
+      metrics: makeMetrics(),
+    });
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining(gift.contractId),
+      expect.objectContaining({ contractId: gift.contractId })
+    );
+  });
+
+  it("logs a failure line and continues when extendTtl throws", async () => {
+    const bad = makeGift({
+      contractId: "CBAD000000000000000000000000000000000000000000000000000000000",
+    });
+    const good = makeGift({
+      contractId: "CGOOD00000000000000000000000000000000000000000000000000000000",
+    });
+
+    const extendTtl = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("simulation failed"))
+      .mockResolvedValueOnce("XDR==");
+    const submitTransaction = jest.fn().mockResolvedValue("hash");
+    const logger = makeLogger();
+
+    const result = await runTtlKeeper({
+      now: () => NOW,
+      listGifts: async () => [bad, good],
+      extendTtl,
+      submitTransaction,
+      logger,
+      metrics: makeMetrics(),
+    });
+
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining(bad.contractId),
+      expect.objectContaining({ contractId: bad.contractId })
+    );
+    expect(result.failed).toEqual([bad.contractId]);
+    expect(result.extended).toEqual([good.contractId]);
+  });
+
+  it("emits a ttl.alert metric when remaining TTL is below the 7-day buffer", async () => {
+    const atRisk = makeGift({
+      contractId: "CRISK00000000000000000000000000000000000000000000000000000000",
+      remainingTtlSeconds: 3 * DAY_SECONDS, // below 7-day buffer
+    });
+    const healthy = makeGift({
+      contractId: "CHEALTHY0000000000000000000000000000000000000000000000000000",
+      remainingTtlSeconds: 30 * DAY_SECONDS,
+    });
+
+    const metrics = makeMetrics();
+    const logger = makeLogger();
+
+    await runTtlKeeper({
+      now: () => NOW,
+      listGifts: async () => [atRisk, healthy],
+      extendTtl: jest.fn().mockResolvedValue("XDR=="),
+      submitTransaction: jest.fn().mockResolvedValue("hash"),
+      logger,
+      metrics,
+    });
+
+    expect(TTL_ALERT_BUFFER_SECONDS).toBe(7 * DAY_SECONDS);
+    expect(metrics.increment).toHaveBeenCalledWith(
+      "ttl.alert",
+      expect.objectContaining({ contractId: atRisk.contractId })
+    );
+    expect(metrics.increment).not.toHaveBeenCalledWith(
+      "ttl.alert",
+      expect.objectContaining({ contractId: healthy.contractId })
+    );
+  });
+
+  it("tracks XLM keeper cost per call and against the budget", async () => {
+    const gift = makeGift();
+    const metrics = makeMetrics();
+
+    const result = await runTtlKeeper({
+      now: () => NOW,
+      listGifts: async () => [gift],
+      extendTtl: jest.fn().mockResolvedValue("XDR=="),
+      submitTransaction: jest.fn().mockResolvedValue("hash"),
+      logger: makeLogger(),
+      metrics,
+      feePerCallXlm: 0.01,
+      dailyBudgetXlm: 1,
+    });
+
+    expect(result.totalCostXlm).toBeCloseTo(0.01);
+    expect(metrics.gauge).toHaveBeenCalledWith("ttl.keeper.cost_xlm", 0.01);
+    expect(result.budgetExceeded).toBe(false);
   });
 });
