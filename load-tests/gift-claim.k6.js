@@ -4,12 +4,18 @@
  *
  * Scenario: 50 concurrent virtual users claiming gifts simultaneously.
  *
+ * Load profile: 50 concurrent virtual users, 5-minute ramp-up,
+ * sustained for 10 minutes, then ramp-down.
+ *
  * Thresholds (performance regression gates):
- *   - p95 response time < 3000 ms  (claim involves Stellar tx — higher budget)
- *   - error rate < 1%
+ *   - p95 response time < 500 ms
+ *   - error rate < 0.1%
  *
  * Usage:
  *   BASE_URL=http://localhost:3000 GIFT_IDS=id1,id2,... STELLAR_KEY=G... k6 run load-tests/gift-claim.k6.js
+ *
+ * Results are exported to JSON (--summary-export / handleSummary) for
+ * comparison against the baseline in CI.
  *
  * GIFT_IDS should be a comma-separated list of pre-seeded gift IDs with status "unlocked".
  * STELLAR_KEY is the recipient's Stellar public key used for all claim requests.
@@ -27,17 +33,22 @@ const claimDuration = new Trend("gift_claim_duration", true);
 export const options = {
   scenarios: {
     gift_claim: {
-      executor: "constant-vus",
-      vus: 50,
-      duration: "30s",
+      executor: "ramping-vus",
+      startVUs: 0,
+      stages: [
+        { duration: "5m", target: 50 }, // ramp up to 50 VUs over 5 minutes
+        { duration: "10m", target: 50 }, // sustain 50 VUs for 10 minutes
+        { duration: "1m", target: 0 }, // ramp down
+      ],
+      gracefulRampDown: "30s",
     },
   },
   thresholds: {
-    // p95 latency under 3 s (Stellar submission adds latency)
-    gift_claim_duration: ["p(95)<3000"],
-    // error rate under 1%
-    gift_claim_errors: ["rate<0.01"],
-    http_req_failed: ["rate<0.01"],
+    // p95 latency under 500 ms
+    gift_claim_duration: ["p(95)<500"],
+    // error rate under 0.1%
+    gift_claim_errors: ["rate<0.001"],
+    http_req_failed: ["rate<0.001"],
   },
 };
 
@@ -92,3 +103,14 @@ export default function () {
 
   sleep(0.2); // 200 ms think time
 }
+
+// ─── Summary export (for CI baseline comparison) ──────────────────────────────
+export function handleSummary(data) {
+  const out = __ENV.RESULTS_FILE || "load-tests/results/gift-claim-summary.json";
+  return {
+    [out]: JSON.stringify(data, null, 2),
+    stdout: textSummary(data, { indent: " ", enableColors: true }),
+  };
+}
+
+import { textSummary } from "https://jslib.k6.io/k6-summary/0.0.2/index.js";

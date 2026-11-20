@@ -2,15 +2,17 @@
  * k6 load test — Gift Creation endpoint
  * Endpoint: POST /api/v1/gifts
  *
- * Scenario: 100 concurrent virtual users creating gifts simultaneously.
+ * Scenario: ramp up to 50 concurrent virtual users over 5 minutes,
+ * sustain 50 VUs for 10 minutes, then ramp down.
  *
  * Thresholds (performance regression gates):
- *   - p95 response time < 2000 ms
- *   - error rate < 1%
- *   - throughput > 50 req/s
+ *   - p95 response time < 500 ms
+ *   - error rate < 0.1%
  *
  * Usage:
  *   BASE_URL=http://localhost:3000 AUTH_TOKEN=<jwt> k6 run load-tests/gift-creation.k6.js
+ *
+ * Results are exported to JSON (--summary-export) for baseline comparison in CI.
  */
 
 import http from "k6/http";
@@ -25,18 +27,23 @@ const creationDuration = new Trend("gift_creation_duration", true);
 export const options = {
   scenarios: {
     gift_creation: {
-      executor: "constant-vus",
-      vus: 100,
-      duration: "30s",
+      executor: "ramping-vus",
+      startVUs: 0,
+      stages: [
+        { duration: "5m", target: 50 }, // ramp up to 50 VUs over 5 minutes
+        { duration: "10m", target: 50 }, // sustain 50 VUs for 10 minutes
+        { duration: "30s", target: 0 }, // ramp down
+      ],
+      gracefulRampDown: "30s",
     },
   },
   thresholds: {
-    // p95 latency under 2 s
-    gift_creation_duration: ["p(95)<2000"],
-    // error rate under 1%
-    gift_creation_errors: ["rate<0.01"],
-    // overall http failure rate under 1%
-    http_req_failed: ["rate<0.01"],
+    // p95 latency under 500 ms
+    gift_creation_duration: ["p(95)<500"],
+    // error rate under 0.1%
+    gift_creation_errors: ["rate<0.001"],
+    // overall http failure rate under 0.1%
+    http_req_failed: ["rate<0.001"],
   },
 };
 

@@ -43,10 +43,24 @@ export default defineConfig({
   },
   projects: [
     // ── Desktop ──────────────────────────────────────────────────────────────
+    // Covers all major page routes (landing, send, dashboard, gift detail,
+    // claim, login, register, profile, notifications) in light mode.
     {
       name: "chromium",
-      testMatch: /components\.spec\.ts/,
+      testMatch: /(components|pages)\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
+    },
+
+    // ── Desktop dark mode ────────────────────────────────────────────────────
+    // Same page routes rendered with prefers-color-scheme: dark so CSS
+    // regressions in dark theme are caught before merge.
+    {
+      name: "chromium-dark",
+      testMatch: /(components|pages)\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        colorScheme: "dark",
+      },
     },
 
     // ── Mobile viewports (Issue #299) ─────────────────────────────────────────
@@ -55,7 +69,7 @@ export default defineConfig({
     // viewport label appended to every snapshot filename.
     {
       name: "mobile-375",
-      testMatch: /mobile\.spec\.ts/,
+      testMatch: /(mobile|pages)\.spec\.ts/,
       use: {
         ...devices["iPhone SE"],
         viewport: { width: 375, height: 667 },
@@ -66,7 +80,7 @@ export default defineConfig({
     },
     {
       name: "mobile-390",
-      testMatch: /mobile\.spec\.ts/,
+      testMatch: /(mobile|pages)\.spec\.ts/,
       use: {
         ...devices["iPhone 14"],
         viewport: { width: 390, height: 844 },
@@ -77,13 +91,28 @@ export default defineConfig({
     },
     {
       name: "mobile-428",
-      testMatch: /mobile\.spec\.ts/,
+      testMatch: /(mobile|pages)\.spec\.ts/,
       use: {
         ...devices["iPhone 14 Plus"],
         viewport: { width: 428, height: 926 },
         deviceScaleFactor: 3,
         isMobile: true,
         hasTouch: true,
+      },
+    },
+
+    // ── Mobile dark mode ─────────────────────────────────────────────────────
+    // Mobile viewport with dark color scheme for the major page routes.
+    {
+      name: "mobile-390-dark",
+      testMatch: /(mobile|pages)\.spec\.ts/,
+      use: {
+        ...devices["iPhone 14"],
+        viewport: { width: 390, height: 844 },
+        deviceScaleFactor: 3,
+        isMobile: true,
+        hasTouch: true,
+        colorScheme: "dark",
       },
     },
   ],

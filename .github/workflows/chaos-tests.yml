@@ -133,8 +133,14 @@ jobs:
       - name: Run Redis chaos tests
         id: redis-chaos
         run: |
+          # Issue #589 — Redis unavailability chaos suite:
+          # rate-limit fallback, idempotency fallback, session null reads,
+          # and 200/503 (never 500) endpoint responses under Redis failure.
           CHAOS_MODE=1 CHAOS_APP_URL=http://localhost:3000 \
           TOXIPROXY_API=http://localhost:8474 \
+          REDIS_PROXY_NAME=redis \
+          REDIS_PROXY_LISTEN=0.0.0.0:6381 \
+          REDIS_PROXY_UPSTREAM=redis:6379 \
           npx jest chaos-tests/chaos-redis.test.ts \
             --runInBand --forceExit --no-coverage \
             --testTimeout=30000 \
@@ -163,12 +169,18 @@ jobs:
           echo "**Date:** $(date -u '+%Y-%m-%d %H:%M UTC')" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
-          # Redis results
+          # Redis results (Issue #589 — Redis unavailability suite)
           if [ -f chaos-redis-results.json ]; then
             PASSED=$(jq '.numPassedTests' chaos-redis-results.json 2>/dev/null || echo "?")
             FAILED=$(jq '.numFailedTests' chaos-redis-results.json 2>/dev/null || echo "?")
+            TOTAL=$(jq '.numTotalTests' chaos-redis-results.json 2>/dev/null || echo "?")
             echo "### Redis Failure Tests" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Passed: $PASSED  |  Failed: $FAILED" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Passed: $PASSED  |  Failed: $FAILED  |  Total: $TOTAL" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Test | Status |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+            jq -r '.testResults[]?.assertionResults[]? | "| \(.title) | \(.status) |"' \
+              chaos-redis-results.json >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
           else
             echo "### Redis Failure Tests" >> "$GITHUB_STEP_SUMMARY"
             echo "⚠️ Results file not found" >> "$GITHUB_STEP_SUMMARY"
@@ -211,13 +223,23 @@ jobs:
           fi
 
       - name: Fail if any chaos test failed
+        if: always()
         run: |
           REDIS_FAIL=${{ steps.redis-chaos.outcome == 'failure' && '1' || '0' }}
           PG_FAIL=${{ steps.postgres-chaos.outcome == 'failure' && '1' || '0' }}
+          REDIS_OUTCOME="${{ steps.redis-chaos.outcome }}"
+          PG_OUTCOME="${{ steps.postgres-chaos.outcome }}"
+
+          # Treat a missing/skipped Redis suite as a failure — the Redis
+          # unavailability suite (Issue #589) must always run.
+          if [ "$REDIS_OUTCOME" != "success" ]; then
+            REDIS_FAIL=1
+          fi
+
           if [ "$REDIS_FAIL" = "1" ] || [ "$PG_FAIL" = "1" ]; then
             echo "❌ One or more chaos test suites failed."
-            echo "   Redis suite: ${{ steps.redis-chaos.outcome }}"
-            echo "   Postgres suite: ${{ steps.postgres-chaos.outcome }}"
+            echo "   Redis suite: ${REDIS_OUTCOME:-missing}"
+            echo "   Postgres suite: ${PG_OUTCOME:-missing}"
             echo ""
             echo "Review the uploaded artifacts and update the runbook at"
             echo "docs/ops/runbook.md#chaos-engineering-results if needed."

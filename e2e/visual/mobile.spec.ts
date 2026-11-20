@@ -6,8 +6,13 @@
  *   • 390 px  — iPhone 14 / 15 / 16 (standard)
  *   • 428 px  — iPhone 14 Plus / 15 Plus / 16 Plus
  *
- * All five key pages are covered:
- *   landing (/), send (/send), dashboard (/dashboard), claim (/gifts/:id), login (/auth/login)
+ * All major pages are covered:
+ *   landing (/), send (/send), dashboard (/dashboard), gift detail (/gifts/:id),
+ *   claim (/claim/:id), login (/auth/login), register (/auth/register),
+ *   profile (/profile), notifications (/notifications)
+ *
+ * Dark mode variants are captured for every page via the `dark` query param
+ * (see `gotoWithTheme` below), producing e.g. "landing-375px-dark.png".
  *
  * SNAPSHOT STABILITY
  * ──────────────────
@@ -109,6 +114,73 @@ async function mockGiftRoutes(page: Page): Promise<void> {
   }
 }
 
+/** Mock the notifications API used by the notifications page. */
+async function mockNotificationRoutes(page: Page): Promise<void> {
+  await page.route("**/api/v1/notifications", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        notifications: [
+          {
+            id: "notif-1",
+            type: "gift_claimed",
+            title: "Your gift was claimed",
+            message: "Alice claimed your gift.",
+            read: false,
+            createdAt: new Date(VISUAL_SEED_EPOCH - 3_600_000).toISOString(),
+          },
+          {
+            id: "notif-2",
+            type: "gift_unlocked",
+            title: "A gift was unlocked",
+            message: "A gift you sent is now unlocked.",
+            read: true,
+            createdAt: new Date(VISUAL_SEED_EPOCH - 86_400_000).toISOString(),
+          },
+        ],
+        unreadCount: 1,
+      }),
+    })
+  );
+}
+
+/** Mock the profile API used by the profile page. */
+async function mockProfileRoutes(page: Page): Promise<void> {
+  await page.route("**/api/v1/users/me", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: VISUAL_USERS.alice.id,
+        phone: VISUAL_USERS.alice.phone,
+        displayName: VISUAL_USERS.alice.displayName,
+        createdAt: new Date(VISUAL_SEED_EPOCH - 30 * 86_400_000).toISOString(),
+        stats: { sent: 4, received: 2, claimed: 1 },
+      }),
+    })
+  );
+}
+
+/**
+ * Navigate to `path`, optionally forcing dark mode via the `dark` query param
+ * that the app's theme provider reads on boot.
+ */
+async function gotoWithTheme(
+  page: Page,
+  path: string,
+  dark: boolean
+): Promise<void> {
+  const url = dark ? `${path}${path.includes("?") ? "&" : "?"}dark=1` : path;
+  await page.goto(url);
+  await page.waitForLoadState("networkidle");
+}
+
+/** Suffix appended to snapshot names for dark-mode variants. */
+function themeSuffix(dark: boolean): string {
+  return dark ? "-dark" : "";
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 //
 // Playwright projects for mobile-375, mobile-390, and mobile-428 are defined
@@ -127,98 +199,212 @@ function viewportLabel(projectName: string): string {
 
 // ─── Landing page ──────────────────────────────────────────────────────────────
 
-test("mobile — landing page", async ({ page }, testInfo) => {
-  const vp = viewportLabel(testInfo.project.name);
-  await freezeClock(page);
-  await page.goto("/");
-  // Wait for above-the-fold content to settle
-  await page.waitForLoadState("networkidle");
-  await expect(page).toHaveScreenshot(`landing-${vp}.png`);
-});
+for (const dark of [false, true]) {
+  test(`mobile — landing page${themeSuffix(dark)}`, async ({ page }, testInfo) => {
+    const vp = viewportLabel(testInfo.project.name);
+    await freezeClock(page);
+    await gotoWithTheme(page, "/", dark);
+    await expect(page).toHaveScreenshot(`landing-${vp}${themeSuffix(dark)}.png`);
+  });
+}
 
 // ─── Send (gift creation) page ─────────────────────────────────────────────────
 
-test("mobile — send page", async ({ page }, testInfo) => {
-  const vp = viewportLabel(testInfo.project.name);
-  await freezeClock(page);
-  await mockSession(page);
-  await page.goto("/send");
-  await page.waitForLoadState("networkidle");
-  await expect(page).toHaveScreenshot(`send-${vp}.png`);
-});
+for (const dark of [false, true]) {
+  test(`mobile — send page${themeSuffix(dark)}`, async ({ page }, testInfo) => {
+    const vp = viewportLabel(testInfo.project.name);
+    await freezeClock(page);
+    await mockSession(page);
+    await gotoWithTheme(page, "/send", dark);
+    await expect(page).toHaveScreenshot(`send-${vp}${themeSuffix(dark)}.png`);
+  });
+}
 
 // ─── Dashboard ─────────────────────────────────────────────────────────────────
 
-test("mobile — dashboard", async ({ page }, testInfo) => {
-  const vp = viewportLabel(testInfo.project.name);
-  await freezeClock(page);
-  await mockSession(page);
-  await mockGiftRoutes(page);
-  await page.goto("/dashboard");
-  await page.waitForLoadState("networkidle");
-  await expect(page).toHaveScreenshot(`dashboard-${vp}.png`);
-});
+for (const dark of [false, true]) {
+  test(`mobile — dashboard${themeSuffix(dark)}`, async ({ page }, testInfo) => {
+    const vp = viewportLabel(testInfo.project.name);
+    await freezeClock(page);
+    await mockSession(page);
+    await mockGiftRoutes(page);
+    await gotoWithTheme(page, "/dashboard", dark);
+    await expect(page).toHaveScreenshot(`dashboard-${vp}${themeSuffix(dark)}.png`);
+  });
+}
 
-// ─── Claim / gift detail (locked gift) ────────────────────────────────────────
+// ─── Gift detail (locked gift) ────────────────────────────────────────────────
 
-test("mobile — claim page (locked gift)", async ({ page }, testInfo) => {
-  const vp = viewportLabel(testInfo.project.name);
-  await freezeClock(page);
-  await mockSession(page);
-  await page.route(`**/api/v1/gifts/${GIFT_LOCKED.id}`, (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(giftApiResponse(GIFT_LOCKED)),
-    })
-  );
-  await page.goto(`/gifts/${GIFT_LOCKED.id}`);
-  await page.waitForLoadState("networkidle");
-  await expect(page).toHaveScreenshot(`claim-locked-${vp}.png`);
-});
+for (const dark of [false, true]) {
+  test(`mobile — gift detail (locked gift)${themeSuffix(dark)}`, async ({ page }, testInfo) => {
+    const vp = viewportLabel(testInfo.project.name);
+    await freezeClock(page);
+    await mockSession(page);
+    await page.route(`**/api/v1/gifts/${GIFT_LOCKED.id}`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(giftApiResponse(GIFT_LOCKED)),
+      })
+    );
+    await gotoWithTheme(page, `/gifts/${GIFT_LOCKED.id}`, dark);
+    await expect(page).toHaveScreenshot(
+      `gift-detail-locked-${vp}${themeSuffix(dark)}.png`
+    );
+  });
+}
 
-test("mobile — claim page (unlocked gift)", async ({ page }, testInfo) => {
-  const vp = viewportLabel(testInfo.project.name);
-  await freezeClock(page);
-  await mockSession(page);
-  await page.route(`**/api/v1/gifts/${GIFT_UNLOCKED.id}`, (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(giftApiResponse(GIFT_UNLOCKED)),
-    })
-  );
-  await page.goto(`/gifts/${GIFT_UNLOCKED.id}`);
-  await page.waitForLoadState("networkidle");
-  await expect(page).toHaveScreenshot(`claim-unlocked-${vp}.png`);
-});
+for (const dark of [false, true]) {
+  test(`mobile — gift detail (unlocked gift)${themeSuffix(dark)}`, async ({ page }, testInfo) => {
+    const vp = viewportLabel(testInfo.project.name);
+    await freezeClock(page);
+    await mockSession(page);
+    await page.route(`**/api/v1/gifts/${GIFT_UNLOCKED.id}`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(giftApiResponse(GIFT_UNLOCKED)),
+      })
+    );
+    await gotoWithTheme(page, `/gifts/${GIFT_UNLOCKED.id}`, dark);
+    await expect(page).toHaveScreenshot(
+      `gift-detail-unlocked-${vp}${themeSuffix(dark)}.png`
+    );
+  });
+}
 
-test("mobile — claim page (claimed gift)", async ({ page }, testInfo) => {
-  const vp = viewportLabel(testInfo.project.name);
-  await freezeClock(page);
-  await mockSession(page);
-  await page.route(`**/api/v1/gifts/${GIFT_CLAIMED.id}`, (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(giftApiResponse(GIFT_CLAIMED)),
-    })
-  );
-  await page.goto(`/gifts/${GIFT_CLAIMED.id}`);
-  await page.waitForLoadState("networkidle");
-  await expect(page).toHaveScreenshot(`claim-claimed-${vp}.png`);
-});
+for (const dark of [false, true]) {
+  test(`mobile — gift detail (claimed gift)${themeSuffix(dark)}`, async ({ page }, testInfo) => {
+    const vp = viewportLabel(testInfo.project.name);
+    await freezeClock(page);
+    await mockSession(page);
+    await page.route(`**/api/v1/gifts/${GIFT_CLAIMED.id}`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(giftApiResponse(GIFT_CLAIMED)),
+      })
+    );
+    await gotoWithTheme(page, `/gifts/${GIFT_CLAIMED.id}`, dark);
+    await expect(page).toHaveScreenshot(
+      `gift-detail-claimed-${vp}${themeSuffix(dark)}.png`
+    );
+  });
+}
+
+// ─── Claim page ───────────────────────────────────────────────────────────────
+
+for (const dark of [false, true]) {
+  test(`mobile — claim page (locked gift)${themeSuffix(dark)}`, async ({ page }, testInfo) => {
+    const vp = viewportLabel(testInfo.project.name);
+    await freezeClock(page);
+    await mockSession(page);
+    await page.route(`**/api/v1/gifts/${GIFT_LOCKED.id}`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(giftApiResponse(GIFT_LOCKED)),
+      })
+    );
+    await gotoWithTheme(page, `/claim/${GIFT_LOCKED.id}`, dark);
+    await expect(page).toHaveScreenshot(
+      `claim-locked-${vp}${themeSuffix(dark)}.png`
+    );
+  });
+}
+
+for (const dark of [false, true]) {
+  test(`mobile — claim page (unlocked gift)${themeSuffix(dark)}`, async ({ page }, testInfo) => {
+    const vp = viewportLabel(testInfo.project.name);
+    await freezeClock(page);
+    await mockSession(page);
+    await page.route(`**/api/v1/gifts/${GIFT_UNLOCKED.id}`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(giftApiResponse(GIFT_UNLOCKED)),
+      })
+    );
+    await gotoWithTheme(page, `/claim/${GIFT_UNLOCKED.id}`, dark);
+    await expect(page).toHaveScreenshot(
+      `claim-unlocked-${vp}${themeSuffix(dark)}.png`
+    );
+  });
+}
+
+for (const dark of [false, true]) {
+  test(`mobile — claim page (claimed gift)${themeSuffix(dark)}`, async ({ page }, testInfo) => {
+    const vp = viewportLabel(testInfo.project.name);
+    await freezeClock(page);
+    await mockSession(page);
+    await page.route(`**/api/v1/gifts/${GIFT_CLAIMED.id}`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(giftApiResponse(GIFT_CLAIMED)),
+      })
+    );
+    await gotoWithTheme(page, `/claim/${GIFT_CLAIMED.id}`, dark);
+    await expect(page).toHaveScreenshot(
+      `claim-claimed-${vp}${themeSuffix(dark)}.png`
+    );
+  });
+}
 
 // ─── Login page ────────────────────────────────────────────────────────────────
 
-test("mobile — login page", async ({ page }, testInfo) => {
-  const vp = viewportLabel(testInfo.project.name);
-  await freezeClock(page);
-  // No session mock — login page must render unauthenticated
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
-  );
-  await page.goto("/auth/login");
-  await page.waitForLoadState("networkidle");
-  await expect(page).toHaveScreenshot(`login-${vp}.png`);
-});
+for (const dark of [false, true]) {
+  test(`mobile — login page${themeSuffix(dark)}`, async ({ page }, testInfo) => {
+    const vp = viewportLabel(testInfo.project.name);
+    await freezeClock(page);
+    // No session mock — login page must render unauthenticated
+    await page.route("**/api/auth/session", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+    );
+    await gotoWithTheme(page, "/auth/login", dark);
+    await expect(page).toHaveScreenshot(`login-${vp}${themeSuffix(dark)}.png`);
+  });
+}
+
+// ─── Register page ────────────────────────────────────────────────────────────
+
+for (const dark of [false, true]) {
+  test(`mobile — register page${themeSuffix(dark)}`, async ({ page }, testInfo) => {
+    const vp = viewportLabel(testInfo.project.name);
+    await freezeClock(page);
+    // No session mock — register page must render unauthenticated
+    await page.route("**/api/auth/session", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+    );
+    await gotoWithTheme(page, "/auth/register", dark);
+    await expect(page).toHaveScreenshot(`register-${vp}${themeSuffix(dark)}.png`);
+  });
+}
+
+// ─── Profile page ─────────────────────────────────────────────────────────────
+
+for (const dark of [false, true]) {
+  test(`mobile — profile page${themeSuffix(dark)}`, async ({ page }, testInfo) => {
+    const vp = viewportLabel(testInfo.project.name);
+    await freezeClock(page);
+    await mockSession(page);
+    await mockProfileRoutes(page);
+    await gotoWithTheme(page, "/profile", dark);
+    await expect(page).toHaveScreenshot(`profile-${vp}${themeSuffix(dark)}.png`);
+  });
+}
+
+// ─── Notifications page ───────────────────────────────────────────────────────
+
+for (const dark of [false, true]) {
+  test(`mobile — notifications page${themeSuffix(dark)}`, async ({ page }, testInfo) => {
+    const vp = viewportLabel(testInfo.project.name);
+    await freezeClock(page);
+    await mockSession(page);
+    await mockNotificationRoutes(page);
+    await gotoWithTheme(page, "/notifications", dark);
+    await expect(page).toHaveScreenshot(
+      `notifications-${vp}${themeSuffix(dark)}.png`
+    );
+  });
+}
