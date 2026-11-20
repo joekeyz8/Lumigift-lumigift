@@ -175,6 +175,61 @@ const GIFTS = [
     payment_provider: "stripe",
     payment_reference: "seed-pay-strp-004",
   },
+  // ── E2E full-journey fixtures (create → pay → claim) ──────────────────────
+  // Paystack (NGN) path: freshly created gift awaiting webhook confirmation.
+  {
+    id: "seed-gift-e2e-paystack",
+    sender_id: "seed-user-1",
+    recipient_phone_hash: hashPhone("+2348022222222"),
+    recipient_name: "Bob Eze",
+    amount_ngn: 5000,
+    amount_usdc: "3.0000000",
+    status: "pending_payment",
+    unlock_at: future(7),
+    payment_provider: "paystack",
+    payment_reference: "seed-e2e-paystack-ref-001",
+  },
+  // Stripe (USD) path: freshly created gift awaiting webhook confirmation.
+  {
+    id: "seed-gift-e2e-stripe",
+    sender_id: "seed-user-1",
+    recipient_phone_hash: hashPhone("+2348033333333"),
+    recipient_name: "Carol Nwosu",
+    amount_ngn: 0,
+    amount_usdc: "10.0000000",
+    status: "pending_payment",
+    unlock_at: future(7),
+    payment_provider: "stripe",
+    payment_reference: "seed-e2e-stripe-ref-001",
+  },
+  // Paystack (NGN) path: unlocked and claimable via seed-e2e-claim-token-paystack.
+  {
+    id: "seed-gift-e2e-claim-paystack",
+    sender_id: "seed-user-2",
+    recipient_phone_hash: hashPhone("+2348011111111"),
+    recipient_name: "Alice Obi",
+    amount_ngn: 5000,
+    amount_usdc: "3.0000000",
+    status: "unlocked",
+    unlock_at: past(1),
+    stellar_tx_hash: "e2eclaimpaystackhash00000000000000000000000000000000000000001",
+    payment_provider: "paystack",
+    payment_reference: "seed-e2e-paystack-ref-002",
+  },
+  // Stripe (USD) path: unlocked and claimable via seed-e2e-claim-token-stripe.
+  {
+    id: "seed-gift-e2e-claim-stripe",
+    sender_id: "seed-user-2",
+    recipient_phone_hash: hashPhone("+2348044444444"),
+    recipient_name: "David Chukwu",
+    amount_ngn: 0,
+    amount_usdc: "10.0000000",
+    status: "unlocked",
+    unlock_at: past(1),
+    stellar_tx_hash: "e2eclaimstripehash0000000000000000000000000000000000000000001",
+    payment_provider: "stripe",
+    payment_reference: "seed-e2e-stripe-ref-002",
+  },
 ];
 
 // ─── Gift invitations ─────────────────────────────────────────────────────────
@@ -197,6 +252,25 @@ const INVITATIONS = [
     token: "seed-token-xyz987wvu654tsr321",
     status: "claimed",
     expires_at: past(5),
+  },
+  // ── E2E claim fixtures: known tokens for the recipient claim step ─────────
+  {
+    id: "seed-inv-e2e-paystack",
+    gift_id: "seed-gift-e2e-claim-paystack",
+    recipient_phone_hash: hashPhone("+2348011111111"),
+    recipient_phone: "+2348011111111",
+    token: "seed-e2e-claim-token-paystack",
+    status: "pending",
+    expires_at: future(7),
+  },
+  {
+    id: "seed-inv-e2e-stripe",
+    gift_id: "seed-gift-e2e-claim-stripe",
+    recipient_phone_hash: hashPhone("+2348044444444"),
+    recipient_phone: "+2348044444444",
+    token: "seed-e2e-claim-token-stripe",
+    status: "pending",
+    expires_at: future(7),
   },
 ];
 

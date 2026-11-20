@@ -107,10 +107,14 @@ export default defineConfig({
       use: { ...devices["iPhone 12"] },
     },
   ],
-  // In CI the build has already run; start the production server.
-  // Locally, reuse whatever is already running (dev or prod).
+  // In CI the build has already run; seed the test DB, then start the
+  // production server. Locally, reuse whatever is already running (dev or
+  // prod) and seed the test DB first so the full gift journey spec
+  // (create → Paystack/Stripe payment → claim) has deterministic fixtures.
   webServer: {
-    command: process.env.CI ? "npm run start" : "npm run dev",
+    command: process.env.CI
+      ? "npm run db:seed:test && npm run start"
+      : "npm run db:seed:test && npm run dev",
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

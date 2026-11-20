@@ -5,10 +5,6 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
-    paths:
-      - "src/**"
-      - ".github/workflows/accessibility.yml"
-      - "docs/accessibility/known-violations.md"
 
 concurrency:
   group: a11y-${{ github.ref }}
@@ -32,30 +28,25 @@ jobs:
 
       - run: npm ci --legacy-peer-deps
 
-      - name: Run accessibility tests (existing routes — /, /send, /dashboard, /auth/login, GiftCard)
-        run: ./node_modules/.bin/jest src/app/__tests__/accessibility.test.tsx --no-coverage --json --outputFile=axe-results.json
-        # Exit code non-zero if any critical/serious violation is found (test throws)
-
-      - name: Run accessibility regression gates (/help, /auth/register, Navbar, Button, Input, Dialog)
-        run: ./node_modules/.bin/jest src/app/__tests__/accessibility-routes.test.tsx --no-coverage --json --outputFile=axe-routes-results.json
-        # Covers /help, /auth/register, Navbar, Button, Input, Dialog.
+      - name: Run all jest-axe accessibility tests
+        # Dedicated accessibility gate — runs every jest-axe suite on every PR.
+        # Covers landing, /send, /dashboard, /auth/login, /auth/register, /profile,
+        # /claim, gift detail, /help, /notifications and shared components.
+        # Exit code is non-zero if any critical/serious violation is found.
         # Exceptions are tracked in docs/accessibility/known-violations.md.
-
-      - name: Run accessibility audit for all remaining routes
-        # Issue #293 — covers /notifications, /claim, and future routes
-        run: ./node_modules/.bin/jest src/app/__tests__/accessibility-all-routes.test.tsx --no-coverage --json --outputFile=axe-all-routes-results.json
-        # Zero critical/serious violations allowed. Add exceptions to
-        # KNOWN_EXCEPTION_RULES in the test file AND docs/accessibility/known-violations.md.
+        run: |
+          ./node_modules/.bin/jest \
+            src/app/__tests__/accessibility.test.tsx \
+            src/app/__tests__/accessibility-routes.test.tsx \
+            src/app/__tests__/accessibility-all-routes.test.tsx \
+            --no-coverage --json --outputFile=axe-results.json
 
       - name: Upload axe results artifact
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: axe-audit-results
-          path: |
-            axe-results.json
-            axe-routes-results.json
-            axe-all-routes-results.json
+          path: axe-results.json
           retention-days: 30
 
   # ── @axe-core/playwright: full-page E2E audits ───────────────────────────────
@@ -127,11 +118,10 @@ jobs:
             echo
             echo "| Suite | Result |"
             echo "|---|---|"
-            echo "| Existing routes | ${{ steps.axe.outcome }} |"
-            echo "| All routes (regression gates) | ${{ steps.axe-routes.outcome }} |"
+            echo "| jest-axe (all page components) | ${{ steps.axe.outcome }} |"
             echo
             echo "Baseline exceptions are tracked in \`docs/accessibility/known-violations.md\`."
-            for f in axe-results.json axe-routes-results.json; do
+            for f in axe-results.json; do
               [ -f "$f" ] || continue
               jq -r '.testResults[].assertionResults[] | select(.status=="failed")
                 | "<details><summary>❌ \(.fullName)</summary>\n\n```\n\(.failureMessages | join("\n") | .[0:3000])\n```\n</details>"' "$f"
