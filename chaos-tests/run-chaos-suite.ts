@@ -56,6 +56,7 @@ async function main() {
 
   const suites = [
     { name: "Redis failures", file: "chaos-tests/chaos-redis.test.ts" },
+    { name: "Redis failover", file: "chaos-tests/chaos-redis-failover.test.ts" },
     { name: "Postgres failures", file: "chaos-tests/chaos-postgres.test.ts" },
   ];
 

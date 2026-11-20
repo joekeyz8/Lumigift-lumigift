@@ -224,16 +224,78 @@ resource "aws_elasticache_subnet_group" "main" {
   subnet_ids = var.private_subnet_ids
 }
 
-resource "aws_elasticache_cluster" "redis" {
-  cluster_id           = "lumigift-${var.env}"
+# ─── #551: Redis high availability (Multi-AZ replication group) ──────────────
+# Redis backs rate limiting, idempotency keys, exchange rate cache and session
+# data, so a single node is a single point of failure. The replication group
+# below runs a primary plus at least one replica across AZs with automatic
+# failover, so a standby is promoted automatically when the primary dies.
+# See docs/ops/redis-failure-policy.md for the failover procedure.
+
+resource "aws_elasticache_replication_group" "redis" {
+  replication_group_id = "lumigift-${var.env}"
+  description          = "Lumigift ${var.env} Redis (Multi-AZ, automatic failover)"
+
   engine               = "redis"
+  engine_version       = "7.1"
   node_type            = var.redis_node_type
-  num_cache_nodes      = 1
   parameter_group_name = "default.redis7"
-  subnet_group_name    = aws_elasticache_subnet_group.main.name
-  security_group_ids   = [aws_security_group.redis.id]
+  port                 = 6379
+
+  # Multi-AZ with automatic failover requires >= 2 cache clusters
+  num_cache_clusters         = var.redis_num_cache_clusters
+  automatic_failover_enabled = true
+  multi_az_enabled           = true
+
+  subnet_group_name  = aws_elasticache_subnet_group.main.name
+  security_group_ids = [aws_security_group.redis.id]
+
+  # Encryption at rest and in transit (in-transit requires TLS-aware clients)
+  at_rest_encryption_enabled = true
+  transit_encryption_enabled = true
+
+  # Snapshot so a restored cluster can be used if failover cannot recover
+  snapshot_retention_limit = var.env == "prod" ? 7 : 1
+  snapshot_window          = "03:00-04:00" # UTC, low-traffic window
+  maintenance_window       = "sun:04:00-sun:05:00"
+
+  # Apply changes during the maintenance window to avoid surprise failovers
+  apply_immediately = var.env != "prod"
 
   tags = local.tags
+}
+
+# Alert ops when the replication group fails over (primary node replaced)
+resource "aws_cloudwatch_event_rule" "redis_failover" {
+  name        = "lumigift-${var.env}-redis-failover"
+  description = "ElastiCache Redis failover events for lumigift-${var.env}"
+
+  event_pattern = jsonencode({
+    source      = ["aws.elasticache"]
+    detail-type = ["ElastiCache Replication Group Failover"]
+    detail = {
+      ReplicationGroupId = [aws_elasticache_replication_group.redis.replication_group_id]
+    }
+  })
+
+  tags = local.tags
+}
+
+resource "aws_cloudwatch_event_target" "redis_failover_sns" {
+  rule = aws_cloudwatch_event_rule.redis_failover.name
+  arn  = aws_sns_topic.backup_alerts.arn
+}
+
+resource "aws_sns_topic_policy" "redis_failover_alerts" {
+  arn = aws_sns_topic.backup_alerts.arn
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "events.amazonaws.com" }
+      Action    = "sns:Publish"
+      Resource  = aws_sns_topic.backup_alerts.arn
+    }]
+  })
 }
 
 # ─── Compute — App Runner (serverless Next.js) ────────────────────────────────
@@ -643,6 +705,25 @@ resource "aws_iam_role_policy" "github_actions_terraform_state" {
       }
     ]
   })
+}
+
+# ─── Outputs ──────────────────────────────────────────────────────────────────
+
+# #551: Primary endpoint of the HA Redis replication group. Point REDIS_URL at
+# this endpoint (rediss:// for TLS) so the app follows automatic failover.
+output "redis_primary_endpoint" {
+  description = "Primary endpoint address of the Redis replication group"
+  value       = aws_elasticache_replication_group.redis.primary_endpoint_address
+}
+
+output "redis_reader_endpoint" {
+  description = "Reader endpoint address of the Redis replication group"
+  value       = aws_elasticache_replication_group.redis.reader_endpoint_address
+}
+
+output "redis_port" {
+  description = "Port the Redis replication group listens on"
+  value       = aws_elasticache_replication_group.redis.port
 }
 
 # ─── Locals ───────────────────────────────────────────────────────────────────

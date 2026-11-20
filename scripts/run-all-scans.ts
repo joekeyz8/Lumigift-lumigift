@@ -79,6 +79,21 @@ for (let i = 0; i < scans.length; i++) {
     console.error(`❌ ${scan.name}: CRITICAL findings detected or scan failed!`);
     failedScans++;
   }
+
+  // Docker images follow the same severity policy as CI: CRITICAL blocks,
+  // HIGH only produces a warning (non-fatal).
+  if (scan.type === "docker") {
+    try {
+      execSync("trivy image lumigift-app:latest --severity HIGH", {
+        cwd: scan.cwd || rootDir,
+        stdio: "inherit",
+      });
+    } catch (err) {
+      console.warn(
+        `⚠️  ${scan.name}: HIGH severity findings detected (non-blocking warning).`
+      );
+    }
+  }
 }
 
 console.log("\n=======================================================");

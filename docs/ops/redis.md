@@ -41,18 +41,51 @@ docker compose exec redis-replica redis-cli info replication
 
 ### Production
 
-Configure **at least one managed replica** via your cloud provider:
+Production **must not** run a single Redis instance. Use one of the following
+high-availability topologies:
 
 | Provider    | Option                                   |
 | ----------- | ---------------------------------------- |
 | AWS         | ElastiCache Multi-AZ with auto-failover  |
 | GCP         | Memorystore with read replica            |
 | Upstash     | Multi-region replication                 |
-| Self-hosted | Redis Sentinel (≥1 sentinel, ≥1 replica) |
+| Self-hosted | Redis Sentinel (≥3 sentinels, ≥1 replica) |
 
-Set the `REDIS_URL` env var to the primary endpoint. If your provider gives you a
-read-replica URL for offloading reads (e.g., rate-limit counters), set
-`REDIS_READ_URL` accordingly.
+#### Application connection modes
+
+The application uses the `redis` client, which supports Sentinel and Cluster
+topologies natively. The mode is selected by environment variables:
+
+| Env var               | Format                                | Purpose                                                       |
+| --------------------- | ------------------------------------- | ------------------------------------------------------------- |
+| `REDIS_URL`           | `redis://host:6379`                   | Single-node / primary endpoint (dev, or managed failover)     |
+| `REDIS_SENTINELS`     | `host1:26379,host2:26379,host3:26379` | Comma-separated Sentinel endpoints (enables Sentinel mode)    |
+| `REDIS_SENTINEL_NAME` | `mymaster`                            | Sentinel master set name (required with `REDIS_SENTINELS`)    |
+| `REDIS_CLUSTER_NODES` | `host1:6379,host2:6379,host3:6379`    | Comma-separated cluster seed nodes (enables Cluster mode)     |
+| `REDIS_READ_URL`      | `redis://host:6380`                   | Optional read-replica endpoint for read-only workloads        |
+
+Resolution order: `REDIS_CLUSTER_NODES` → `REDIS_SENTINELS` → `REDIS_URL`.
+In Sentinel mode the client asks the sentinels for the current primary, so
+failover requires **no application restart or config change**. In Cluster mode
+the client discovers the slot map from the seed nodes and follows `MOVED`
+redirects automatically.
+
+Example (Sentinel):
+
+```bash
+REDIS_SENTINELS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+REDIS_SENTINEL_NAME=mymaster
+```
+
+Example (Cluster):
+
+```bash
+REDIS_CLUSTER_NODES=redis-1:6379,redis-2:6379,redis-3:6379
+```
+
+For managed providers that expose a stable primary endpoint (ElastiCache with
+auto-failover, Upstash), set `REDIS_URL` to that endpoint and leave the
+Sentinel/Cluster variables unset.
 
 ## Running locally
 
@@ -66,6 +99,12 @@ Replica: `redis://localhost:6380`
 ## Failover testing procedure
 
 Use this procedure to test that failover works before it happens in production.
+**Target: standby promoted and application traffic recovered within 30 seconds.**
+
+An automated chaos test covers this scenario — see
+`tests/chaos/test_redis_failure.py` (and the `chaos-redis` CI job). The manual
+steps below mirror what the chaos test does and can be used for ad-hoc
+verification in staging.
 
 ### 1. Verify replication is healthy
 
@@ -89,6 +128,21 @@ docker compose exec redis-replica redis-cli ping
 
 ### 3. Promote replica to primary (manual, for self-hosted Redis)
 
+With Sentinel configured, promotion is automatic — the sentinels elect a new
+primary and the application client reconnects to it. Measure the time from the
+kill to the first successful write:
+
+```bash
+# Start the timer, kill the primary, then poll until writes succeed
+date +%s
+docker compose stop redis
+until docker compose exec redis-sentinel-1 redis-cli -p 26379 \
+  sentinel get-master-addr-by-name mymaster | grep -q redis-replica; do sleep 0.5; done
+date +%s   # elapsed must be <= 30s
+```
+
+Without Sentinel (plain replica), promote manually:
+
 ```bash
 docker compose exec redis-replica redis-cli replicaof no one
 # Verify it is now primary
@@ -96,7 +150,8 @@ docker compose exec redis-replica redis-cli info replication
 # Expect: role:master
 ```
 
-Update `REDIS_URL` to point to the promoted replica endpoint.
+Then update `REDIS_URL` to point to the promoted replica endpoint (not required
+in Sentinel/Cluster mode).
 
 ### 4. Restart original primary as a new replica (optional)
 
@@ -114,6 +169,10 @@ docker compose exec redis-replica redis-cli replicaof redis 6379
 
 > **Note**: Managed providers (ElastiCache, Upstash) handle promotion automatically.
 > You only need to update `REDIS_URL` if the primary endpoint changes.
+>
+> **Acceptance**: failover in staging must complete within **30 seconds**. If the
+> chaos test exceeds this budget, treat it as a release blocker and review
+> `sentinel down-after-milliseconds` / `failover-timeout` settings.
 
 ## Recovery procedure
 

@@ -668,6 +668,107 @@ stellar contract invoke \
 
 ---
 
+## Blue-Green / Canary Deployment and Rollback
+
+Lumigift releases use a canary-first, blue-green promotion strategy. No change
+goes to 100% of production traffic without passing a canary window and an
+explicit human approval. The workflow lives in `.github/workflows/deploy-canary.yml`.
+
+### Release Flow
+
+1. **Deploy canary (10% of traffic)**
+   - Merging to `main` triggers `deploy-canary.yml`, which deploys the new build
+     as a Vercel preview/canary deployment and routes **10% of production traffic**
+     to it.
+   - The previous (stable) deployment continues to serve the remaining 90%
+     (the "blue" side of blue-green).
+
+2. **Monitoring window (15 minutes)**
+   - The canary is monitored for **15 minutes**.
+   - The gate metric is the **error rate** (5xx responses / total requests),
+     sourced from the `LumigiftHighErrorRate` alert and the Grafana/Loki
+     dashboards (see [Log Aggregation](#log-aggregation)).
+
+3. **Automatic rollback on error-rate breach**
+   - If the canary error rate **exceeds 1%** at any point during the 15-minute
+     window, the workflow **automatically rolls back**: traffic is shifted back
+     to the stable deployment and the canary is discarded. No approval is needed
+     for an automatic rollback.
+
+4. **Promote to production (explicit approval)**
+   - If the canary stays below 1% error rate for the full window, the workflow
+     pauses at the `production` GitHub Environment, which requires **explicit
+     approval** from a designated reviewer.
+   - On approval, the canary is promoted to 100% of traffic (green becomes blue).
+
+### Approving Promotion in GitHub Actions
+
+1. Open the running `deploy-canary.yml` run in the **Actions** tab.
+2. The job `promote-to-production` will show **"Waiting for approval"**.
+3. Click **Review deployments**, select the `production` environment, and click
+   **Approve and deploy**.
+4. Only members of the required reviewers configured on the `production`
+   environment (Settings → Environments → `production`) can approve.
+
+> **Do not approve** if the canary error rate is trending toward 1%, if there are
+> open P0/P1 incidents, or outside the agreed release window.
+
+### Triggering an Automatic Rollback
+
+The automatic rollback is built into `deploy-canary.yml` and fires without
+intervention when the error-rate gate fails. To force the same path manually
+(e.g. you spot a regression the metric missed), re-run the workflow's
+`rollback` job from the Actions UI, or cancel the run before promotion — the
+canary is discarded and traffic returns to the stable deployment.
+
+### Manual Rollback Procedure
+
+Use this when a bad release has already reached 100% of traffic, or when the
+automated path is unavailable.
+
+**Option A — Vercel dashboard (preferred)**
+
+1. Open the project in the Vercel dashboard → **Deployments**.
+2. Locate the last known-good **Production** deployment (the previous blue).
+3. Use the deployment's **⋯ → Promote to Production** action to instantly shift
+   100% of traffic back to it.
+
+**Option B — Vercel CLI**
+
+```bash
+# List recent deployments to find the last known-good one
+vercel ls --token $VERCEL_TOKEN
+
+# Roll production back to the previous deployment
+vercel rollback --token $VERCEL_TOKEN
+
+# Or roll back to a specific deployment URL
+vercel rollback <deployment-url> --token $VERCEL_TOKEN
+```
+
+### Post-Rollback Verification
+
+After rolling back, confirm the system is healthy before closing the incident:
+
+1. **Error rate recovered**: Grafana/Loki error rate back below 1% over 5 minutes
+   (`LumigiftHighErrorRate` alert resolved).
+2. **Traffic on stable build**: Vercel dashboard shows the previous deployment
+   serving 100% of production traffic.
+3. **Smoke checks pass**:
+   ```bash
+   curl -fsS https://lumigift.app/api/health
+   curl -fsS https://lumigift.app/api/v1/gifts
+   ```
+4. **Cron jobs healthy**: no new `cron.dead_letter` entries (see
+   [Cron Job Failure](#cron-job-failure)).
+5. **Data integrity**: confirm no partial writes from the bad release (check
+   recent DB changes and, for escrow, run the reconciliation query in
+   [DB ↔ On-Chain Reconciliation Mismatch](#incident-db--on-chain-reconciliation-mismatch)).
+6. **Communicate**: post a resolution update in Slack `#incidents` and open a
+   blameless post-mortem for any P0/P1.
+
+---
+
 ## Chaos Engineering Tests (Issue #297)
 
 Lumigift runs a weekly chaos engineering suite that verifies the app degrades

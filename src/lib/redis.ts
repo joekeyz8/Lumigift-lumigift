@@ -1,8 +1,44 @@
-import { createClient } from "redis";
+import { createClient, createSentinel, createCluster } from "redis";
 import { serverConfig } from "@/server/config";
 
-let client: ReturnType<typeof createClient> | null = null;
-let connecting: Promise<ReturnType<typeof createClient>> | null = null;
+type RedisClient = ReturnType<typeof createClient>;
+
+let client: RedisClient | null = null;
+let connecting: Promise<RedisClient> | null = null;
+
+/**
+ * Builds a Redis client based on the configured high-availability topology.
+ *
+ * - When `REDIS_SENTINELS` is set, a Sentinel-backed client is created using
+ *   `REDIS_SENTINEL_NAME` (default `mymaster`) so the primary is discovered and
+ *   failover is handled automatically.
+ * - When `REDIS_CLUSTER_NODES` is set, a cluster client is created.
+ * - Otherwise a plain single-node client is created from `REDIS_URL`.
+ */
+function createRedisClient(): RedisClient {
+  const { sentinels, sentinelName, clusterNodes, url } = serverConfig.redis;
+
+  if (sentinels && sentinels.length > 0) {
+    return createSentinel({
+      name: sentinelName ?? "mymaster",
+      sentinelRootNodes: sentinels.map((sentinel) => {
+        const [host, port] = sentinel.split(":");
+        return { host, port: Number(port ?? 26379) };
+      }),
+    }) as unknown as RedisClient;
+  }
+
+  if (clusterNodes && clusterNodes.length > 0) {
+    return createCluster({
+      rootNodes: clusterNodes.map((node) => {
+        const [host, port] = node.split(":");
+        return { url: `redis://${host}:${port ?? 6379}` };
+      }),
+    }) as unknown as RedisClient;
+  }
+
+  return createClient({ url });
+}
 
 export class RedisUnavailableError extends Error {
   readonly operation: string;
@@ -76,7 +112,7 @@ export async function getRedisClient(): Promise<ReturnType<typeof createClient>>
   if (client?.isOpen) return client;
   if (connecting) return connecting;
 
-  const newClient = createClient({ url: serverConfig.redis.url });
+  const newClient = createRedisClient();
   const monitoredClient = monitorCommands(newClient);
   let connectionErrorRecorded = false;
   newClient.on("error", (err: Error) => {
@@ -140,7 +176,7 @@ export async function closeRedisClient(): Promise<void> {
  * @returns A new, connected Redis subscriber client.
  */
 export async function createSubscriberClient() {
-  const subscriber = createClient({ url: serverConfig.redis.url });
+  const subscriber = createRedisClient();
   subscriber.on("error", (err: Error) => console.error("[Redis subscriber]", err));
   await subscriber.connect();
   return subscriber;

@@ -1,5 +1,9 @@
 # ─── Global Arguments ────────────────────────────────────────────────────────
-ARG NODE_VERSION=20.18.3-alpine3.21
+# Base image is pinned to an immutable digest so every build stage uses the
+# exact same image. When bumping Node, update BOTH the tag and the digest
+# deliberately (e.g. `docker buildx imagetools inspect node:<tag>` to obtain
+# the new sha256 digest) — never rely on a floating tag.
+ARG NODE_VERSION=20.18.3-alpine3.21@sha256:1a526b97cace6b4006256570efa1a29cd32e7784c6317195d508923822889abe
 
 # ─── Stage 1: Dependencies ────────────────────────────────────────────────────
 FROM node:${NODE_VERSION} AS deps

@@ -33,12 +33,37 @@ echo "✅ Docker build succeeded."
 echo ""
 
 # Step 3: Trivy Vulnerability Scan
+# Mirrors the CI gate in .github/workflows/vulnerability-scan.yml:
+#   - CRITICAL vulnerabilities fail the check (exit-code 1)
+#   - HIGH vulnerabilities are reported as warnings only
+#   - SARIF output is written for upload to GitHub Security advisories
 echo "▶ [3/4] Running Trivy Vulnerability Scan..."
+TRIVY_SARIF_OUTPUT="${TRIVY_SARIF_OUTPUT:-trivy-results.sarif}"
+TRIVY_ARGS=(image --ignore-unfixed --format table --exit-code 1 --severity CRITICAL "$IMAGE_TAG")
+
 if command -v trivy &> /dev/null; then
-    trivy image --severity CRITICAL,HIGH --ignore-unfixed "$IMAGE_TAG"
+    TRIVY_CMD=(trivy)
 else
     echo "ℹ️ Trivy CLI not installed. Running via Docker..."
-    docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --severity CRITICAL,HIGH --ignore-unfixed "$IMAGE_TAG"
+    TRIVY_CMD=(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/work" -w /work aquasec/trivy:latest)
+fi
+
+# CRITICAL gate: non-zero exit blocks the check
+if ! "${TRIVY_CMD[@]}" "${TRIVY_ARGS[@]}"; then
+    echo "❌ Trivy found CRITICAL vulnerabilities in $IMAGE_TAG"
+    FAILURES=$((FAILURES + 1))
+fi
+
+# HIGH findings: warn only, never fail
+echo "ℹ️ Checking for HIGH severity vulnerabilities (warning only)..."
+if ! "${TRIVY_CMD[@]}" image --ignore-unfixed --format table --exit-code 0 --severity HIGH "$IMAGE_TAG"; then
+    echo "⚠️ Trivy HIGH severity scan encountered an error (non-blocking)."
+fi
+
+# SARIF report for GitHub Security advisories (best-effort, non-blocking)
+echo "ℹ️ Writing SARIF report to $TRIVY_SARIF_OUTPUT..."
+if ! "${TRIVY_CMD[@]}" image --ignore-unfixed --format sarif --output "$TRIVY_SARIF_OUTPUT" --exit-code 0 "$IMAGE_TAG"; then
+    echo "⚠️ Could not generate SARIF report (non-blocking)."
 fi
 echo ""
 

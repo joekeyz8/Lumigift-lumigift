@@ -1,12 +1,15 @@
-# Canary Deployment Workflow — Issue #296
+# Canary Deployment Workflow — Issue #550
 #
-# Implements a phased canary strategy for production deployments on Vercel:
+# Implements the formal blue-green / canary release process for production
+# deployments on Vercel:
 #
-#   Stage 1 — Canary (preview URL, ~5% traffic via feature flag / URL)
+#   Stage 1 — Canary (preview URL, 10% of traffic)
 #     • Deploy to a Vercel preview deployment (not yet promoted to production).
+#     • Route 10% of production traffic to the canary via a Vercel Edge Config
+#       traffic-split entry (CANARY_TRAFFIC_PERCENT=10).
 #     • Run smoke tests against the preview URL.
-#     • Monitor Sentry error rate for 10 minutes.
-#     • Auto-rollback if Sentry error rate exceeds 2× the 7-day baseline.
+#     • Monitor the production error rate for a 15-minute canary window.
+#     • Auto-rollback (abandon the canary) if the error rate exceeds 1%.
 #
 #   Stage 2 — Manual promotion gate
 #     • Requires explicit approval from a "production" environment reviewer.
@@ -47,10 +50,12 @@ permissions:
 
 # ── Shared build env ───────────────────────────────────────────────────────────
 env:
-  # Sentry error-rate thresholds
-  CANARY_MONITOR_MINUTES: "10"
-  # Auto-rollback if errors-per-minute exceed this multiple of baseline
-  CANARY_ERROR_MULTIPLIER: "2"
+  # Canary traffic split — percentage of production traffic routed to the canary
+  CANARY_TRAFFIC_PERCENT: "10"
+  # Length of the canary monitoring window (minutes)
+  CANARY_MONITOR_MINUTES: "15"
+  # Auto-rollback if the production error rate exceeds this percentage
+  CANARY_ERROR_RATE_THRESHOLD: "1"
 
 jobs:
   # ── 1. Verify environment ────────────────────────────────────────────────────
@@ -162,9 +167,9 @@ jobs:
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
-  # ── 3. Canary deploy (preview URL — ~5% traffic) ──────────────────────────────
+  # ── 3. Canary deploy (preview URL — 10% traffic) ──────────────────────────────
   deploy-canary:
-    name: "Deploy Canary (Stage 1 — 5% traffic)"
+    name: "Deploy Canary (Stage 1 — 10% traffic)"
     runs-on: ubuntu-latest
     needs: [build]
     environment: production
@@ -207,8 +212,7 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
       # Deploy as a Vercel preview deployment (NOT promoted to --prod yet).
-      # This URL serves the canary build. Share it with internal testers or
-      # route ~5% of traffic via a feature flag / edge config entry.
+      # This URL serves the canary build.
       - name: Deploy canary preview to Vercel
         id: deploy-preview
         uses: amondnet/vercel-action@9f74b3dd5db549fd4b35b62e18ce9c965cdfa1c3 # v2.3.0
@@ -218,10 +222,39 @@ jobs:
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
           # No --prod flag → preview deployment only
 
+      # Route CANARY_TRAFFIC_PERCENT (10%) of production traffic to the canary
+      # preview via a Vercel Edge Config traffic-split entry. The edge middleware
+      # reads `canaryTrafficPercent` / `canaryUrl` and splits traffic accordingly.
+      - name: Route 10% of traffic to canary (Edge Config)
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          EDGE_CONFIG_ID: ${{ secrets.VERCEL_EDGE_CONFIG_ID }}
+          CANARY_URL: ${{ steps.deploy-preview.outputs.preview-url }}
+        run: |
+          echo "🔀 Routing ${CANARY_TRAFFIC_PERCENT}% of production traffic to canary: ${CANARY_URL}"
+          npm install -g vercel@latest --silent
+
+          if [ -z "${EDGE_CONFIG_ID}" ]; then
+            echo "⚠️  VERCEL_EDGE_CONFIG_ID not set — skipping traffic split."
+            echo "   Route traffic manually via the feature flag / Edge Config dashboard."
+            exit 0
+          fi
+
+          vercel edge-config update "${EDGE_CONFIG_ID}" \
+            --token "${VERCEL_TOKEN}" \
+            --scope "${VERCEL_ORG_ID}" \
+            --patch '[{"op":"upsert","key":"canaryTrafficPercent","value":'"${CANARY_TRAFFIC_PERCENT}"'},{"op":"upsert","key":"canaryUrl","value":"'"${CANARY_URL}"'"}]'
+
+          echo "✅ Edge Config updated — ${CANARY_TRAFFIC_PERCENT}% of traffic now served by the canary."
+
       - name: Announce canary URL
         run: |
           echo "🐤 Canary deployed at: ${{ steps.deploy-preview.outputs.preview-url }}"
+          echo "   Traffic split: ${CANARY_TRAFFIC_PERCENT}% canary / $((100 - CANARY_TRAFFIC_PERCENT))% production."
           echo "   Monitoring for ${{ env.CANARY_MONITOR_MINUTES }} minutes before promotion gate."
+          echo "   Auto-rollback if error rate exceeds ${{ env.CANARY_ERROR_RATE_THRESHOLD }}%."
 
       - name: Notify Slack — canary deployed
         if: env.SLACK_WEBHOOK != ''
@@ -277,54 +310,32 @@ jobs:
           path: /tmp/smoke_body.txt
           retention-days: 7
 
-  # ── 5. Sentry error-rate monitor ─────────────────────────────────────────────
+  # ── 5. Error-rate monitor (15-minute canary window) ──────────────────────────
   monitor-canary:
-    name: "Monitor Sentry Error Rate (10 min)"
+    name: "Monitor Error Rate (15 min canary window)"
     runs-on: ubuntu-latest
     needs: [smoke-canary]
     if: needs.smoke-canary.outputs.smoke-passed == 'true'
     outputs:
       error-rate-ok: ${{ steps.check-sentry.outputs.error-rate-ok }}
     steps:
-      - name: Monitor Sentry error rate
+      - name: Monitor production error rate
         id: check-sentry
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
           MONITOR_MINUTES: ${{ env.CANARY_MONITOR_MINUTES }}
-          ERROR_MULTIPLIER: ${{ env.CANARY_ERROR_MULTIPLIER }}
+          ERROR_RATE_THRESHOLD: ${{ env.CANARY_ERROR_RATE_THRESHOLD }}
         run: |
-          echo "⏱  Monitoring Sentry for ${MONITOR_MINUTES} minutes..."
-          echo "   Auto-rollback threshold: ${ERROR_MULTIPLIER}× baseline error rate."
+          echo "⏱  Monitoring production error rate for ${MONITOR_MINUTES} minutes..."
+          echo "   Auto-rollback threshold: error rate > ${ERROR_RATE_THRESHOLD}%."
           echo ""
 
-          # ── Fetch baseline (7-day rolling average) via Sentry Stats API ───────
-          # https://docs.sentry.io/api/stats/retrieve-event-counts-for-a-project/
-          BASELINE_START=$(date -u -d "7 days ago" +%Y-%m-%dT%H:%M:%S)
-          BASELINE_END=$(date -u -d "1 hour ago" +%Y-%m-%dT%H:%M:%S)
-
-          BASELINE_RESP=$(curl -sf \
-            "https://sentry.io/api/0/projects/${SENTRY_ORG}/${SENTRY_PROJECT}/stats/?stat=received&resolution=1d&since=${BASELINE_START}&until=${BASELINE_END}" \
-            -H "Authorization: Bearer ${SENTRY_AUTH_TOKEN}" \
-            2>/dev/null || echo "[]")
-
-          # Sum total events over baseline period
-          BASELINE_TOTAL=$(echo "${BASELINE_RESP}" | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          total = sum(v for _, v in data) if isinstance(data, list) else 0
-          # Per-hour average
-          hours = max(len(data) * 24, 1)
-          print(int(total / hours))
-          " 2>/dev/null || echo "0")
-
-          echo "Baseline error rate: ~${BASELINE_TOTAL} events/hour"
-
-          THRESHOLD=$(( BASELINE_TOTAL * ERROR_MULTIPLIER ))
-          echo "Auto-rollback threshold: ${THRESHOLD} events/hour"
-
           # ── Poll every 2 minutes for MONITOR_MINUTES ─────────────────────────
+          # Error rate = errored requests / total requests over the poll window,
+          # computed from the Sentry Stats API (received vs. rejected events).
+          # https://docs.sentry.io/api/stats/retrieve-event-counts-for-a-project/
           POLL_INTERVAL=120
           POLLS=$(( (MONITOR_MINUTES * 60) / POLL_INTERVAL ))
           ERROR_RATE_OK=true
@@ -335,29 +346,36 @@ jobs:
             NOW=$(date -u +%Y-%m-%dT%H:%M:%S)
             WINDOW_START=$(date -u -d "${POLL_INTERVAL} seconds ago" +%Y-%m-%dT%H:%M:%S)
 
-            CANARY_RESP=$(curl -sf \
+            ERRORS_RESP=$(curl -sf \
               "https://sentry.io/api/0/projects/${SENTRY_ORG}/${SENTRY_PROJECT}/stats/?stat=received&resolution=1h&since=${WINDOW_START}&until=${NOW}" \
               -H "Authorization: Bearer ${SENTRY_AUTH_TOKEN}" \
               2>/dev/null || echo "[]")
 
-            CURRENT_RATE=$(echo "${CANARY_RESP}" | python3 -c "
+            TOTAL_RESP=$(curl -sf \
+              "https://sentry.io/api/0/projects/${SENTRY_ORG}/${SENTRY_PROJECT}/stats/?stat=generated&resolution=1h&since=${WINDOW_START}&until=${NOW}" \
+              -H "Authorization: Bearer ${SENTRY_AUTH_TOKEN}" \
+              2>/dev/null || echo "[]")
+
+            CURRENT_RATE=$(python3 -c "
           import sys, json
-          data = json.load(sys.stdin)
-          total = sum(v for _, v in data) if isinstance(data, list) else 0
-          print(total)
-          " 2>/dev/null || echo "0")
+          errors = json.loads(sys.argv[1])
+          total = json.loads(sys.argv[2])
+          e = sum(v for _, v in errors) if isinstance(errors, list) else 0
+          t = sum(v for _, v in total) if isinstance(total, list) else 0
+          print(f'{(e / t * 100) if t > 0 else 0:.2f}')
+          " "${ERRORS_RESP}" "${TOTAL_RESP}" 2>/dev/null || echo "0.00")
 
-            echo "  [poll $i/$POLLS] Current rate: ${CURRENT_RATE} events | Threshold: ${THRESHOLD}"
+            echo "  [poll $i/$POLLS] Error rate: ${CURRENT_RATE}% | Threshold: ${ERROR_RATE_THRESHOLD}%"
 
-            if [ "${CURRENT_RATE}" -gt "${THRESHOLD}" ] && [ "${THRESHOLD}" -gt 0 ]; then
-              echo "🚨 Error rate ${CURRENT_RATE} exceeds ${ERROR_MULTIPLIER}× baseline threshold (${THRESHOLD})!"
+            if python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) > float(sys.argv[2]) else 1)" "${CURRENT_RATE}" "${ERROR_RATE_THRESHOLD}"; then
+              echo "🚨 Error rate ${CURRENT_RATE}% exceeds ${ERROR_RATE_THRESHOLD}% threshold!"
               ERROR_RATE_OK=false
               break
             fi
           done
 
           if [ "$ERROR_RATE_OK" = "true" ]; then
-            echo "✅ Error rate within threshold for ${MONITOR_MINUTES} minutes."
+            echo "✅ Error rate stayed at or below ${ERROR_RATE_THRESHOLD}% for ${MONITOR_MINUTES} minutes."
             echo "error-rate-ok=true" >> "$GITHUB_OUTPUT"
           else
             echo "error-rate-ok=false" >> "$GITHUB_OUTPUT"
@@ -379,7 +397,7 @@ jobs:
           curl -s -X POST "${SLACK_WEBHOOK}" \
             -H "Content-Type: application/json" \
             -d "{
-              \"text\": \"🚨 *Canary auto-rollback triggered* — error rate exceeded ${CANARY_ERROR_MULTIPLIER}× baseline\",
+              \"text\": \"🚨 *Canary auto-rollback triggered* — error rate exceeded ${CANARY_ERROR_RATE_THRESHOLD}%\",
               \"attachments\": [{
                 \"color\": \"danger\",
                 \"fields\": [
@@ -391,9 +409,24 @@ jobs:
               }]
             }"
 
-      - name: Mark canary as failed (no production traffic affected)
+      - name: Abandon canary (no production traffic affected)
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          EDGE_CONFIG_ID: ${{ secrets.VERCEL_EDGE_CONFIG_ID }}
         run: |
           echo "🔴 Canary deployment FAILED — production was never promoted."
+          echo "   Abandoning canary and restoring 100% production traffic."
+          npm install -g vercel@latest --silent
+
+          if [ -n "${EDGE_CONFIG_ID}" ]; then
+            vercel edge-config update "${EDGE_CONFIG_ID}" \
+              --token "${VERCEL_TOKEN}" \
+              --scope "${VERCEL_ORG_ID}" \
+              --patch '[{"op":"upsert","key":"canaryTrafficPercent","value":0}]' \
+              || echo "⚠️  Failed to reset Edge Config traffic split — reset manually."
+          fi
+
           echo "   The canary preview URL is now abandoned."
           echo "   Production remains on the last successful deployment."
           echo ""
@@ -403,7 +436,7 @@ jobs:
 
   # ── 7. Manual promotion gate ──────────────────────────────────────────────────
   promotion-gate:
-    name: "Manual Promotion Gate (25% → 100%)"
+    name: "Manual Promotion Gate (10% → 100%)"
     runs-on: ubuntu-latest
     needs: [monitor-canary, deploy-canary]
     if: needs.monitor-canary.outputs.error-rate-ok == 'true'
@@ -423,7 +456,8 @@ jobs:
           echo "  Canary URL : ${{ needs.deploy-canary.outputs.canary-url }}"
           echo "  Commit     : $GITHUB_SHA"
           echo "  Monitored  : ${{ env.CANARY_MONITOR_MINUTES }} minutes"
-          echo "  Threshold  : ${{ env.CANARY_ERROR_MULTIPLIER }}× baseline — NOT exceeded"
+          echo "  Traffic    : ${{ env.CANARY_TRAFFIC_PERCENT }}% canary / $((100 - CANARY_TRAFFIC_PERCENT))% production"
+          echo "  Threshold  : ${{ env.CANARY_ERROR_RATE_THRESHOLD }}% error rate — NOT exceeded"
           echo ""
           echo "  ▶  Approve this job to promote the canary to 100% production traffic."
           echo "  ✕  Reject this job to abandon the canary (production is unaffected)."
@@ -497,6 +531,24 @@ jobs:
           vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
           vercel-args: "--prod"
+
+      # Restore 100% of traffic to production now that the canary is promoted.
+      - name: Reset traffic split to 100% production
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          EDGE_CONFIG_ID: ${{ secrets.VERCEL_EDGE_CONFIG_ID }}
+        run: |
+          if [ -z "${EDGE_CONFIG_ID}" ]; then
+            echo "⚠️  VERCEL_EDGE_CONFIG_ID not set — reset traffic split manually."
+            exit 0
+          fi
+          npm install -g vercel@latest --silent
+          vercel edge-config update "${EDGE_CONFIG_ID}" \
+            --token "${VERCEL_TOKEN}" \
+            --scope "${VERCEL_ORG_ID}" \
+            --patch '[{"op":"upsert","key":"canaryTrafficPercent","value":0}]'
+          echo "✅ Traffic split reset — 100% of traffic served by production."
 
       - name: Create Sentry release
         run: |

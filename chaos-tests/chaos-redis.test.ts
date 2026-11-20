@@ -36,12 +36,31 @@ import {
 } from "./toxiproxy-setup";
 import { createClient } from "redis";
 import http from "http";
+import { execFile } from "child_process";
+import { promisify } from "util";
+
+const execFileAsync = promisify(execFile);
 
 // Skip if not in chaos mode (prevents accidental runs in normal CI)
 const CHAOS_MODE = process.env.CHAOS_MODE === "1";
 
 const APP_URL = process.env.CHAOS_APP_URL ?? "http://localhost:3000";
 const REDIS_PROXY_URL = "redis://localhost:6381";
+
+/**
+ * Sentinel-aware Redis URL used by the app in HA mode. When Sentinel is
+ * configured the app connects via the sentinel endpoints and discovers the
+ * current primary, so a failover is transparent to the application.
+ */
+const REDIS_SENTINEL_URL =
+  process.env.CHAOS_REDIS_SENTINEL_URL ?? "redis://localhost:26379";
+
+/** Name of the primary Redis container in the chaos compose stack. */
+const REDIS_PRIMARY_CONTAINER =
+  process.env.CHAOS_REDIS_PRIMARY_CONTAINER ?? "chaos-redis-primary";
+
+/** Max time (ms) allowed for a standby to be promoted after primary loss. */
+const FAILOVER_BUDGET_MS = 30_000;
 
 /** Minimal HTTP POST helper */
 async function post(path: string, body: unknown): Promise<{ status: number; data: unknown }> {
@@ -79,6 +98,75 @@ async function post(path: string, body: unknown): Promise<{ status: number; data
     req.write(payload);
     req.end();
   });
+}
+
+/**
+ * Resolve the current primary address via Redis Sentinel.
+ * Returns null if Sentinel cannot be reached or has no primary yet.
+ */
+async function getSentinelPrimary(): Promise<{ host: string; port: number } | null> {
+  const client = createClient({ url: REDIS_SENTINEL_URL });
+  try {
+    await client.connect();
+    const result = (await client.sendCommand([
+      "SENTINEL",
+      "get-master-addr-by-name",
+      process.env.CHAOS_REDIS_MASTER_NAME ?? "mymaster",
+    ])) as string[] | null;
+    if (!result || result.length < 2) return null;
+    return { host: result[0], port: Number(result[1]) };
+  } catch {
+    return null;
+  } finally {
+    try {
+      await client.disconnect();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Poll Sentinel until a primary is reported and it responds to PING.
+ * Resolves with the elapsed time in ms once a healthy primary is found.
+ */
+async function waitForPromotedPrimary(maxMs = FAILOVER_BUDGET_MS): Promise<number> {
+  const start = Date.now();
+  const deadline = start + maxMs;
+  while (Date.now() < deadline) {
+    const primary = await getSentinelPrimary();
+    if (primary) {
+      const client = createClient({
+        url: `redis://${primary.host}:${primary.port}`,
+      });
+      try {
+        await client.connect();
+        await client.ping();
+        await client.disconnect();
+        return Date.now() - start;
+      } catch {
+        // primary not yet accepting connections; keep polling
+      } finally {
+        try {
+          await client.disconnect();
+        } catch {
+          // ignore
+        }
+      }
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error(`No promoted Redis primary within ${maxMs}ms`);
+}
+
+/** Stop the primary Redis container to simulate a hard failure. */
+async function killRedisPrimary(): Promise<void> {
+  await execFileAsync("docker", ["stop", REDIS_PRIMARY_CONTAINER]);
+}
+
+/** Start the primary Redis container again (it rejoins as a replica). */
+async function startRedisPrimary(): Promise<void> {
+  await execFileAsync("docker", ["start", REDIS_PRIMARY_CONTAINER]);
 }
 
 /** Wait for Redis to accept connections via the proxy. */
@@ -120,6 +208,12 @@ afterEach(async () => {
   if (!CHAOS_MODE) return;
   // Always restore Redis proxy so subsequent tests start clean
   await restoreProxy(PROXY_NAMES.redis);
+  // Ensure the primary container is running again after failover tests
+  try {
+    await startRedisPrimary();
+  } catch {
+    // container may already be running or not present in this stack
+  }
   // Brief pause to let connection pools recover
   await new Promise((r) => setTimeout(r, 500));
 });
@@ -190,6 +284,34 @@ describe("Chaos: Redis failure", () => {
       expect(okResponse.status).not.toBe(503);
     },
     20_000
+  );
+
+  itChaos(
+    "Standby is promoted and app recovers within 30s after primary is killed",
+    async () => {
+      // Confirm a healthy primary exists before we break anything.
+      const before = await getSentinelPrimary();
+      expect(before).not.toBeNull();
+
+      // Kill the primary container to simulate a hard node failure.
+      await killRedisPrimary();
+
+      // Sentinel should promote the standby within the failover budget.
+      const elapsed = await waitForPromotedPrimary(FAILOVER_BUDGET_MS);
+      expect(elapsed).toBeLessThan(FAILOVER_BUDGET_MS);
+
+      // The promoted primary must differ from the one we killed (or at least
+      // be reachable) — the app should now be able to use Redis again.
+      const after = await getSentinelPrimary();
+      expect(after).not.toBeNull();
+
+      // App-level recovery: OTP flow should no longer fail closed.
+      const response = await post("/api/auth/send-otp", {
+        phone: "+2348099000096",
+      });
+      expect(response.status).not.toBe(503);
+    },
+    60_000
   );
 
   itChaos(

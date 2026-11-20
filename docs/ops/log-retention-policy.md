@@ -90,15 +90,46 @@ the literal string `[REDACTED]`.
 
 ## Retention Policy
 
-| Log type           | Retention   | Provider setting                                           |
-| ------------------ | ----------- | ---------------------------------------------------------- |
-| Application logs   | **30 days** | Betterstack: Sources → your source → Retention → 30 days   |
-| Audit logs         | **90 days** | Separate Betterstack source or database table `audit_logs` |
-| Security/auth logs | **90 days** | Separate Betterstack source, filter `service = "auth"`     |
-| Error logs         | **30 days** | Included in application logs; export P0 incidents to S3    |
+> **Issue #553** — Launch readiness gate M-5: production log retention policy.
+
+| Log type           | Retention    | Provider setting                                           |
+| ------------------ | ------------ | ---------------------------------------------------------- |
+| Application logs   | **30 days**  | CloudWatch log group (Terraform-managed)                   |
+| Audit logs         | **1 year**   | CloudWatch log group (Terraform-managed) — compliance      |
+| Access logs        | **90 days**  | CloudWatch log group (Terraform-managed)                   |
+| Security/auth logs | **90 days**  | Separate Betterstack source, filter `service = "auth"`     |
+| Error logs         | **30 days**  | Included in application logs; export P0 incidents to S3    |
 
 Logs **must not** be retained beyond these periods except for active incident investigations
 (freeze the relevant window in your aggregation service) or legal holds (contact legal@lumigift.app).
+
+### CloudWatch Retention (Terraform)
+
+In production, CloudWatch log groups are provisioned and managed **exclusively via
+Terraform** (`infra/terraform/`). Each log group sets an explicit `retention_in_days`
+value:
+
+| Log group                    | `retention_in_days` | Rationale                          |
+| ---------------------------- | ------------------- | ---------------------------------- |
+| `/lumigift/prod/app`         | `30`                | Application logs                   |
+| `/lumigift/prod/audit`       | `365`               | Compliance requirement (1 year)    |
+| `/lumigift/prod/access`      | `90`                | Access logs                        |
+
+Retention **must not** be changed manually in the AWS console — any console change will
+be reverted by the next `terraform apply` and will cause drift. To change retention,
+open a PR against the Terraform configuration and follow the normal review process.
+
+### Audit Log Table Pruning
+
+The `audit_logs` PostgreSQL table (see [Audit Logs](#audit-logs-database) below) must be
+retained for the same **1-year** period as the CloudWatch audit log group. The scheduled
+pruning job must therefore delete rows older than **365 days** (not 90 days), keeping the
+database and CloudWatch retention windows aligned:
+
+```sql
+-- Run monthly (or add to a migration):
+DELETE FROM audit_logs WHERE created_at < NOW() - INTERVAL '365 days';
+```
 
 ---
 
@@ -123,11 +154,13 @@ High-value operations (payment, claim, cancel, role change) are written to the
 `audit_logs` PostgreSQL table by `src/server/services/audit.service.ts`. These are
 queried via `GET /api/v1/admin/audit-logs` (admin-only).
 
-Retention: the `audit_logs` table should be pruned by a scheduled job after 90 days:
+Retention: the `audit_logs` table is pruned by a scheduled job after **365 days (1 year)**,
+matching the CloudWatch audit log group retention required for compliance (see
+[Audit Log Table Pruning](#audit-log-table-pruning) above):
 
 ```sql
 -- Run monthly (or add to a migration):
-DELETE FROM audit_logs WHERE created_at < NOW() - INTERVAL '90 days';
+DELETE FROM audit_logs WHERE created_at < NOW() - INTERVAL '365 days';
 ```
 
 ### Vercel Function Logs
