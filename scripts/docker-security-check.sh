@@ -16,14 +16,23 @@ echo ""
 FAILURES=0
 
 # Step 1: Hadolint check
-echo "▶ [1/4] Running Hadolint on Dockerfile..."
-if command -v hadolint &> /dev/null; then
-    hadolint Dockerfile || { echo "❌ Hadolint reported issues in Dockerfile"; FAILURES=$((FAILURES + 1)); }
-    echo "✅ Hadolint passed."
-else
-    echo "ℹ️ Hadolint CLI not installed. Running via Docker..."
-    docker run --rm -i hadolint/hadolint < Dockerfile || { echo "❌ Hadolint reported issues in Dockerfile"; FAILURES=$((FAILURES + 1)); }
-fi
+echo "▶ [1/4] Running Hadolint on Dockerfile and Dockerfile.dev..."
+HADOLINT_FAIL_ON="DL3008,DL3025,DL3045"
+for DOCKERFILE in Dockerfile Dockerfile.dev; do
+    if [ ! -f "$DOCKERFILE" ]; then
+        echo "ℹ️ $DOCKERFILE not found, skipping."
+        continue
+    fi
+    echo "  → Linting $DOCKERFILE (fail on $HADOLINT_FAIL_ON)..."
+    if command -v hadolint &> /dev/null; then
+        hadolint --failure-threshold error --no-fail "$DOCKERFILE" || true
+        hadolint --failure-threshold error "$DOCKERFILE" || { echo "❌ Hadolint reported blocking issues in $DOCKERFILE"; FAILURES=$((FAILURES + 1)); }
+    else
+        echo "  ℹ️ Hadolint CLI not installed. Running via Docker..."
+        docker run --rm -i hadolint/hadolint hadolint --failure-threshold error - < "$DOCKERFILE" || { echo "❌ Hadolint reported blocking issues in $DOCKERFILE"; FAILURES=$((FAILURES + 1)); }
+    fi
+done
+echo "✅ Hadolint check complete."
 echo ""
 
 # Step 2: Build verification

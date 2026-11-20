@@ -668,6 +668,130 @@ stellar contract invoke \
 
 ---
 
+## Database Failover Runbook (Issue #560)
+
+Production PostgreSQL runs as a primary RDS instance in the primary region with a
+cross-region read replica in the secondary region (provisioned via Terraform). This
+section covers promoting the replica to primary when the primary region is unavailable.
+
+### RTO Target
+
+| Metric | Target | Notes |
+| ------ | ------ | ----- |
+| RTO (Recovery Time Objective) | **< 30 minutes** | Measured from incident declaration to validated application health on the promoted replica |
+| RPO (Recovery Point Objective) | < 5 minutes | Cross-region replica lag; some recent writes may be lost |
+
+The RTO clock starts when the on-call engineer declares the failover. Every step below
+should be timed and recorded in the incident channel so the RTO can be measured.
+
+### Failover Procedure
+
+1. **Confirm the primary is unrecoverable** (or that failover is faster than waiting):
+   - Check RDS status in the primary region console / `aws rds describe-db-instances`.
+   - Confirm the cross-region replica is healthy and its `ReplicaLag` is acceptable:
+     ```bash
+     aws rds describe-db-instances \
+       --region "$SECONDARY_REGION" \
+       --db-instance-identifier "$REPLICA_INSTANCE_ID" \
+       --query 'DBInstances[0].{Status:DBInstanceStatus,Lag:StatusInfos}'
+     ```
+   - Record the timestamp — this is the RTO start.
+
+2. **Promote the read replica to primary**:
+   ```bash
+   aws rds promote-read-replica \
+     --region "$SECONDARY_REGION" \
+     --db-instance-identifier "$REPLICA_INSTANCE_ID"
+   ```
+   Wait until `DBInstanceStatus` is `available` (typically 5–15 minutes):
+   ```bash
+   aws rds wait db-instance-available \
+     --region "$SECONDARY_REGION" \
+     --db-instance-identifier "$REPLICA_INSTANCE_ID"
+   ```
+
+3. **Update the connection string / secret**:
+   - The application reads `DATABASE_URL` from AWS Secrets Manager (see
+     [Credential Rotation](#credential-rotation-issue-556)); it does **not** use a static
+     env var.
+   - Update the secret to point at the promoted instance endpoint:
+     ```bash
+     aws secretsmanager update-secret \
+       --secret-id "$DB_SECRET_ID" \
+       --secret-string "{\"url\":\"postgres://$DB_USER:$DB_PASSWORD@$NEW_ENDPOINT:5432/$DB_NAME?sslmode=require\"}"
+     ```
+   - If a DNS CNAME (e.g. `db.lumigift.app`) fronts the database, repoint it at the new
+     endpoint instead so no secret change is needed.
+
+4. **Swap the connection pool (blue-green, no downtime)**:
+   - The app fetches credentials on pool creation and refreshes on a short TTL. Trigger a
+     rolling pool swap by redeploying or by calling the internal pool-refresh hook so new
+     connections use the promoted primary while in-flight requests drain on the old pool.
+   - Verify no connection errors during the swap in the logs dashboard.
+
+5. **Validate application health**:
+   - `GET /api/health` returns `checks.database: "ok"`.
+   - Run a read and a write smoke test:
+     ```bash
+     psql "$DATABASE_URL" -c "SELECT 1;"
+     psql "$DATABASE_URL" -c "INSERT INTO health_probe(ts) VALUES (NOW()) RETURNING id;"
+     ```
+   - Confirm error rate and latency are back to baseline on the dashboard.
+   - Record the timestamp — this is the RTO end. **RTO = end − start; must be < 30 min.**
+
+6. **Rollback** (if the promoted replica is unhealthy or the primary recovers):
+   - If the original primary is still intact, repoint the secret/DNS back to it and swap
+     the pool again.
+   - If the original primary is lost, do **not** roll back — keep the promoted replica and
+     rebuild a new cross-region replica from it via Terraform.
+   - Document the decision and any data loss (RPO window) in the incident channel.
+
+### Failover Drill (Test Procedure)
+
+Run this drill quarterly (and before any launch gate) in a staging environment that
+mirrors production topology:
+
+1. Note the start time.
+2. Simulate primary-region loss (stop the primary or block its security group).
+3. Execute steps 2–5 above against the staging replica.
+4. Confirm `/api/health` is green and smoke tests pass.
+5. Record the measured RTO in the table below. If RTO ≥ 30 minutes, file a follow-up
+   issue to close the gap.
+
+| Drill date | Measured RTO | Result | Notes |
+| ---------- | ------------ | ------ | ----- |
+| _Pending_  | —            | —      | First drill to be run before launch gate |
+
+### Cost Impact
+
+The cross-region read replica roughly doubles database cost for the primary instance
+(replica instance hours + cross-region data transfer for replication). Estimate:
+
+- **Replica instance**: same class as primary (~2× primary instance cost).
+- **Cross-region data transfer**: replication traffic billed at the inter-region rate.
+- **Storage**: replica storage billed at the same rate as primary storage.
+
+Review the AWS Cost Explorer `RDS` and `DataTransfer` line items monthly; if the replica
+cost is not justified, downgrade the replica instance class (accepting a longer RTO).
+
+---
+
+## Credential Rotation (Issue #556)
+
+Database credentials are rotated automatically every **90 days** via an AWS Secrets
+Manager rotation Lambda attached to the RDS secret. The application fetches credentials
+through the Secrets Manager SDK (never a static env var) and swaps its connection pool
+blue-green so rotation causes **no downtime**.
+
+- **Rotation schedule**: 90 days, automatic.
+- **Rotation drill**: documented and tested in
+  [key-rotation.md](./key-rotation.md#database-credential-rotation-drill). Run the drill
+  after any change to the rotation Lambda or the pool-refresh logic.
+- **Verification**: after a rotation, confirm `/api/health` is green and that new
+  connections use the rotated credential (check the secret version in Secrets Manager).
+
+---
+
 ## Chaos Engineering Tests (Issue #297)
 
 Lumigift runs a weekly chaos engineering suite that verifies the app degrades

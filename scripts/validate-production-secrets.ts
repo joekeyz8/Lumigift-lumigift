@@ -46,8 +46,14 @@ const PRODUCTION_SECRET_RULES: SecretRule[] = [
   {
     key: "DATABASE_URL",
     description: "PostgreSQL connection string",
-    required: true,
+    required: false,
     pattern: /^postgres(ql)?:\/\/.+:.+@.+:\d+\/.+/,
+  },
+  {
+    key: "DATABASE_SECRET_ARN",
+    description: "AWS Secrets Manager ARN for RDS credentials (rotated every 90 days)",
+    required: false,
+    pattern: /^arn:aws:secretsmanager:[a-z0-9-]+:\d{12}:secret:.+$/,
   },
   {
     key: "REDIS_URL",
@@ -112,9 +118,38 @@ export function validateProductionSecrets(env: NodeJS.ProcessEnv = process.env):
   const errors: string[] = [];
   const warnings: string[] = [];
   const isMainnet = env.STELLAR_NETWORK === "mainnet";
+  const usesSecretsManager = Boolean(env.DATABASE_SECRET_ARN);
 
   for (const rule of PRODUCTION_SECRET_RULES) {
     const value = env[rule.key];
+
+    // Database credentials: either a static DATABASE_URL or a Secrets Manager ARN
+    // (rotated automatically) must be configured, but not both.
+    if (rule.key === "DATABASE_URL") {
+      if (usesSecretsManager) {
+        if (value) {
+          warnings.push(
+            `[REDUNDANT] DATABASE_URL is set alongside DATABASE_SECRET_ARN. The application fetches credentials from Secrets Manager; remove the static DATABASE_URL.`
+          );
+        }
+        continue;
+      }
+      if (!value) {
+        errors.push(
+          `[MISSING] DATABASE_URL (${rule.description}) is not set and DATABASE_SECRET_ARN is not configured. Provide one of them.`
+        );
+        continue;
+      }
+    }
+
+    if (rule.key === "DATABASE_SECRET_ARN" && !value) {
+      if (!env.DATABASE_URL) {
+        errors.push(
+          `[MISSING] DATABASE_SECRET_ARN (${rule.description}) is not set and DATABASE_URL is not configured. Provide one of them.`
+        );
+      }
+      continue;
+    }
 
     // Check presence
     if (!value) {
@@ -154,6 +189,12 @@ export function validateProductionSecrets(env: NodeJS.ProcessEnv = process.env):
         );
       }
     }
+  }
+
+  if (usesSecretsManager) {
+    warnings.push(
+      `[SECRETS_MANAGER] Database credentials are sourced from DATABASE_SECRET_ARN. Ensure the rotation Lambda is deployed and the rotation drill in docs/ops/key-rotation.md has been executed within the last 90 days.`
+    );
   }
 
   // Check NEXTAUTH_SECRET_PREVIOUS if set

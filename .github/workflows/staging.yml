@@ -95,3 +95,44 @@ jobs:
           name: staging-smoke-report
           path: playwright-report/
           retention-days: 7
+
+  # ── Issue #561: Load tests gate production deploys ──────────────────────────
+  load-tests:
+    name: Load Tests (staging)
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, smoke-tests]
+    env:
+      STAGING_URL: ${{ needs.deploy-staging.outputs.staging-url }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Run load tests against staging
+        run: |
+          mkdir -p load-test-results
+          k6 run \
+            --vus 50 \
+            --duration 2m \
+            --summary-export load-test-results/summary.json \
+            --out json=load-test-results/results.json \
+            load-tests/scenarios.js
+        env:
+          BASE_URL: ${{ env.STAGING_URL }}
+          AUTH_TOKEN: ${{ secrets.STAGING_LOAD_TEST_AUTH_TOKEN }}
+          GIFT_IDS: ${{ vars.STAGING_LOAD_TEST_GIFT_IDS }}
+          STELLAR_KEY: ${{ secrets.STAGING_STELLAR_SERVER_SECRET_KEY }}
+
+      - name: Upload load test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: staging-load-test-results
+          path: load-test-results/
+          retention-days: 14

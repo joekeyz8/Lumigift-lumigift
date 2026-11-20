@@ -38,8 +38,14 @@ export const serverConfig = {
     url: env.REDIS_URL,
   },
   database: {
+    // Static URL is optional when credentials are fetched from Secrets Manager.
     url: env.DATABASE_URL,
     readReplicaUrl: env.READ_REPLICA_DATABASE_URL,
+    // Secrets Manager rotation (issue #556)
+    secretArn: env.DATABASE_SECRET_ARN,
+    awsRegion: env.AWS_REGION,
+    // Multi-region failover (issue #560)
+    failoverEnabled: env.DB_FAILOVER_ENABLED,
     poolMin: env.DB_POOL_MIN,
     poolMax: env.DB_POOL_MAX,
     idleTimeoutMs: env.DB_IDLE_TIMEOUT_MS,

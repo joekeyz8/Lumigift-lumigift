@@ -70,11 +70,15 @@ const envSchema = z.object({
   CSRF_SECRET: secretField(32, "CSRF_SECRET"),
 
   // Database
+  // DATABASE_URL is optional when DATABASE_SECRET_ARN is provided (credentials
+  // are fetched at runtime from AWS Secrets Manager — see issue #556).
   DATABASE_URL: z
     .string()
     .min(1)
+    .optional()
     .refine(
       (val) => {
+        if (val === undefined) return true;
         if (
           process.env.NODE_ENV === "production" ||
           process.env.STRICT_SECRET_VALIDATION === "true"
@@ -88,6 +92,40 @@ const envSchema = z.object({
         message:
           "DATABASE_URL contains default/placeholder credentials not permitted in production",
       }
+    ),
+  // AWS Secrets Manager ARN for RDS credentials (automated 90-day rotation).
+  DATABASE_SECRET_ARN: z
+    .string()
+    .regex(
+      /^arn:aws:secretsmanager:[a-z0-9-]+:\d{12}:secret:.+$/,
+      "DATABASE_SECRET_ARN must be a valid AWS Secrets Manager secret ARN"
+    )
+    .optional(),
+  // AWS region used by the Secrets Manager SDK client.
+  AWS_REGION: z.string().min(1).default("us-east-1"),
+  // Multi-region failover (issue #560): when enabled, the app can switch to
+  // the read replica / promoted primary endpoint without a redeploy.
+  DB_FAILOVER_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((val) => val === "true"),
+  // Connection string for the secondary-region replica (used during failover).
+  READ_REPLICA_DATABASE_URL: z
+    .string()
+    .min(1)
+    .optional()
+    .refine(
+      (val) => {
+        if (val === undefined) return true;
+        if (
+          process.env.NODE_ENV === "production" ||
+          process.env.STRICT_SECRET_VALIDATION === "true"
+        ) {
+          return !isPlaceholderValue(val);
+        }
+        return true;
+      },
+      { message: "READ_REPLICA_DATABASE_URL contains an insecure placeholder" }
     ),
   DB_POOL_MIN: z.coerce.number().int().positive().default(2),
   DB_POOL_MAX: z.coerce.number().int().positive().default(10),
@@ -250,7 +288,27 @@ const envSchema = z.object({
       },
       { message: "CLOUDINARY_API_SECRET contains an insecure placeholder" }
     ),
-});
+})
+  .superRefine((data, ctx) => {
+    // At least one database credential source must be configured.
+    if (!data.DATABASE_URL && !data.DATABASE_SECRET_ARN) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["DATABASE_URL"],
+        message:
+          "Either DATABASE_URL or DATABASE_SECRET_ARN must be provided to connect to the database",
+      });
+    }
+    // Failover requires a replica endpoint to switch to.
+    if (data.DB_FAILOVER_ENABLED && !data.READ_REPLICA_DATABASE_URL) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["READ_REPLICA_DATABASE_URL"],
+        message:
+          "READ_REPLICA_DATABASE_URL is required when DB_FAILOVER_ENABLED is true",
+      });
+    }
+  });
 
 export type Env = z.infer<typeof envSchema>;
 

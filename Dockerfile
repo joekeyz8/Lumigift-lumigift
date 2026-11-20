@@ -48,8 +48,8 @@ ENV NODE_ENV=production \
     PORT=3000
 
 # Install dumb-init for proper signal handling (SIGTERM/SIGINT) and zombie process reaping
-# Clean apk cache and remove temporary files to minimize attack surface
-RUN apk add --no-cache dumb-init=~1.2 && \
+# Pin exact version (DL3008) and clean apk cache to minimize attack surface
+RUN apk add --no-cache "dumb-init=1.2.5-r3" && \
     rm -rf /var/cache/apk/* /tmp/*
 
 # Create dedicated unprivileged system group and user

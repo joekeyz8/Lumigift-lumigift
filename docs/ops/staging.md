@@ -63,10 +63,57 @@ test("@smoke homepage loads", async ({ page }) => {
 });
 ```
 
+## Load tests (Issue #561)
+
+After a successful staging deploy, the load test suite in `load-tests/` runs against
+the live staging URL. It is wired into `.github/workflows/staging.yml` as a step that
+depends on the deploy and smoke-test jobs, so it only runs when staging is healthy.
+
+### Scenarios
+
+| Scenario           | What it exercises                                  |
+| ------------------ | -------------------------------------------------- |
+| Gift creation      | `POST` gift creation endpoint with a valid payload |
+| Claim              | Claim flow for an existing test gift               |
+| Dashboard listing  | Authenticated dashboard gift listing endpoint      |
+
+### Thresholds
+
+The run uses **50 concurrent virtual users (VUs)** and fails the CI step if any
+threshold is breached:
+
+| Metric     | Threshold   |
+| ---------- | ----------- |
+| p95 latency| < 500 ms    |
+| Error rate | < 0.1 %     |
+
+### Failure behaviour
+
+If a threshold is breached the load test step exits non-zero, which fails the
+staging workflow. A failed staging workflow blocks promotion: do not merge
+`develop` → `main` until the load tests pass (or the regression is fixed and the
+workflow is re-run).
+
+### Artifacts
+
+Load test results (summary report and raw metrics) are uploaded as CI artifacts on
+every run, pass or fail, and are retained per the repository's default artifact
+retention. Download them from the **Actions** tab of the staging workflow run.
+
+### Required configuration
+
+The load test job uses the staging GitHub environment and reads:
+
+| Name                     | Type     | Description                              |
+| ------------------------ | -------- | ---------------------------------------- |
+| `STAGING_APP_URL`        | Variable | Base URL the load tests target           |
+| `STAGING_LOAD_TEST_TOKEN` | Secret   | Auth token for authenticated scenarios   |
+
 ## Promoting to production
 
-Once staging is validated, merge `develop` → `main`. The production deploy workflow
-(`.github/workflows/deploy.yml`) will trigger automatically.
+Once staging is validated (including passing load tests), merge `develop` → `main`.
+The production deploy workflow (`.github/workflows/deploy.yml`) will trigger
+automatically.
 
 ---
 

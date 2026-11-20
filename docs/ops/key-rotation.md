@@ -154,6 +154,102 @@ If the key is suspected to be compromised, follow the same steps but with urgenc
 4. Investigate the compromise: check access logs, rotate all related secrets.
 5. Notify the security team and file an incident report.
 
+## Automated Database Credential Rotation
+
+**Applies to:** RDS database credentials (`DB_USER` / `DB_PASSWORD`) used by the application connection pool.
+
+Database credentials are rotated automatically every **90 days** by an AWS Secrets Manager rotation Lambda. No manual steps are required for routine rotation; the drill below is run quarterly to prove the automation works.
+
+### Architecture
+
+| Component | Purpose |
+| --------- | ------- |
+| Secret `lumigift/production/rds-credentials` | Stores `{"username": "...", "password": "..."}` for the RDS instance |
+| Rotation Lambda `lumigift-rds-rotation` | Implements the four-step Secrets Manager rotation interface |
+| EventBridge schedule | Triggers rotation every 90 days (`rate(90 days)`) |
+| Application credential provider | Fetches credentials via the Secrets Manager SDK and caches them in memory |
+
+The application **must not** read database credentials from static environment variables in production. `DB_HOST`, `DB_PORT`, and `DB_NAME` remain plain config; `DB_USER` / `DB_PASSWORD` are resolved at runtime from Secrets Manager (see `src/lib/db-credentials.ts`).
+
+### Rotation Lambda — Four-Step Interface
+
+AWS Secrets Manager invokes the Lambda with a `Step` parameter. The handler must implement all four steps:
+
+1. **`createSecret`** — Generate a new password and store it under the `AWSPENDING` staging label. Do not touch the live credential.
+2. **`setSecret`** — Apply the pending password to the RDS instance (`ALTER USER ... WITH PASSWORD ...`) using the current live credential.
+3. **`testSecret`** — Open a connection to RDS using the `AWSPENDING` credential and run a trivial query (`SELECT 1`). Fail the rotation if this errors.
+4. **`finishSecret`** — Move the `AWSCURRENT` label to the pending version and remove `AWSPENDING`. The old version is retained for rollback until the next rotation.
+
+If any step fails, Secrets Manager retries the rotation and the live credential is left untouched.
+
+### Application Behavior — Blue-Green Connection Pool Swap
+
+To guarantee zero downtime, the application never mutates the in-use pool:
+
+1. A background refresher polls Secrets Manager (default every 5 minutes) and compares the version ID of `AWSCURRENT` with the cached one.
+2. When a new version is detected, the app builds a **new** connection pool using the new credentials and runs a health probe (`SELECT 1`) against it.
+3. Only after the probe succeeds is the new pool promoted to active; in-flight queries on the old pool drain naturally.
+4. The old pool is closed once its connections are idle (grace period, default 30s).
+
+If the probe fails, the new pool is discarded and the old pool keeps serving traffic — a bad rotation can never take the app down.
+
+### Rotation Drill (run quarterly)
+
+1. **Trigger rotation manually** (simulates the 90-day schedule):
+   ```bash
+   aws secretsmanager rotate-secret \
+     --secret-id lumigift/production/rds-credentials \
+     --rotation-lambda-arn <ROTATION_LAMBDA_ARN>
+   ```
+2. **Watch the rotation complete**:
+   ```bash
+   aws secretsmanager describe-secret \
+     --secret-id lumigift/production/rds-credentials \
+     --query 'VersionIdsToStages'
+   ```
+   Confirm the new version ID carries `AWSCURRENT` and no version carries `AWSPENDING`.
+3. **Verify the application picked up the new credentials**:
+   - Check application logs for `db-credentials: rotated to version <id>`.
+   - Confirm the cached version ID in `/api/health?deep=1` matches the new `AWSCURRENT` version.
+4. **Confirm zero downtime**:
+   - Health endpoint returns `200 ok` throughout the drill (no failed probes).
+   - Error rate and p95 latency on the DB dashboards stay flat during the swap.
+   - No connection-refused or auth-failure errors in logs.
+5. **Record the drill** in the audit log (see below).
+
+### Rollback
+
+If the drill or a scheduled rotation misbehaves:
+
+1. Re-point `AWSCURRENT` to the previous version:
+   ```bash
+   aws secretsmanager update-secret-version-stage \
+     --secret-id lumigift/production/rds-credentials \
+     --version-stage AWSCURRENT \
+     --move-to-version-id <PREVIOUS_VERSION_ID> \
+     --remove-from-version-id <NEW_VERSION_ID>
+   ```
+2. The application's refresher detects the version change and swaps back to a pool built from the previous credentials.
+3. If the RDS password itself was already changed, reset it to the previous value using the previous credential, then re-run the drill.
+4. File an incident report if production traffic was affected.
+
+### Audit Log
+
+Every rotation (scheduled or drill) must be recorded. Append an entry to `docs/ops/key-rotation-log.md`:
+
+```markdown
+## DB Credential Rotation — YYYY-MM-DD
+
+- Trigger: [scheduled / manual drill]
+- Rotated by: [automation / engineer name]
+- Secret: lumigift/production/rds-credentials
+- Old version ID: …
+- New version ID: …
+- Verified new credentials in use: [yes/no]
+- Zero downtime confirmed: [yes/no]
+- Rollback performed: [yes/no]
+```
+
 ## Related Documents
 
 - `docs/ops/production-secret-management.md` — Complete production secret management & rotation guide

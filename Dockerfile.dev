@@ -4,12 +4,18 @@ FROM node:${NODE_VERSION} AS development
 
 WORKDIR /app
 
+# Create a non-root user/group to satisfy DL3045
+RUN addgroup -S nodejs && adduser -S nodejs -G nodejs
+
 # Install dependencies
 COPY package.json package-lock.json ./
 RUN npm ci
 
 # Copy source code
 COPY . .
+
+# Ensure the non-root user owns the app directory
+RUN chown -R nodejs:nodejs /app
 
 # Expose port
 EXPOSE 3000
@@ -20,6 +26,8 @@ ENV NODE_ENV=development \
     HOSTNAME="0.0.0.0" \
     PORT=3000
 
+# Switch to non-root user
+USER nodejs
+
 # Start development server with hot reload
 CMD ["npm", "run", "dev"]
-

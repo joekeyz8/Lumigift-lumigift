@@ -1,13 +1,18 @@
 /**
  * k6 combined load test — Gift Creation + Claim (full flow)
  *
- * Runs both scenarios in parallel:
+ * Runs three scenarios in parallel:
  *   - 100 VUs creating gifts for 30 s
  *   - 50 VUs claiming pre-seeded gifts for 30 s
+ *   - 50 VUs listing the dashboard for 30 s
  *
  * Usage:
  *   BASE_URL=http://localhost:3000 AUTH_TOKEN=<jwt> GIFT_IDS=id1,id2 STELLAR_KEY=G... \
  *     k6 run load-tests/combined.k6.js --out json=load-tests/results/run-$(date +%s).json
+ *
+ * Staging CI gate (issue #561): set CI=true to enforce p95 < 500ms and
+ * error rate < 0.1% at 50 concurrent users. k6 exits non-zero when any
+ * threshold is breached, failing the CI job.
  */
 
 import http from "k6/http";
@@ -19,29 +24,50 @@ const creationErrors = new Rate("gift_creation_errors");
 const claimErrors = new Rate("gift_claim_errors");
 const creationDuration = new Trend("gift_creation_duration", true);
 const claimDuration = new Trend("gift_claim_duration", true);
+const dashboardErrors = new Rate("dashboard_listing_errors");
+const dashboardDuration = new Trend("dashboard_listing_duration", true);
+
+// ─── Threshold config ─────────────────────────────────────────────────────────
+// CI (staging gate): p95 < 500ms, error rate < 0.1% at 50 concurrent users.
+// Local runs keep the looser defaults; override via env vars.
+const IS_CI = __ENV.CI === "true";
+const P95_MS = Number(__ENV.P95_MS || (IS_CI ? 500 : 2000));
+const ERROR_RATE = Number(__ENV.ERROR_RATE || (IS_CI ? 0.001 : 0.01));
+const VUS = Number(__ENV.VUS || (IS_CI ? 50 : 100));
+const CLAIM_VUS = Number(__ENV.CLAIM_VUS || (IS_CI ? 50 : 50));
+const DASHBOARD_VUS = Number(__ENV.DASHBOARD_VUS || (IS_CI ? 50 : 50));
+const DURATION = __ENV.DURATION || "30s";
 
 // ─── Options ──────────────────────────────────────────────────────────────────
 export const options = {
   scenarios: {
     gift_creation: {
       executor: "constant-vus",
-      vus: 100,
-      duration: "30s",
+      vus: VUS,
+      duration: DURATION,
       exec: "createGift",
     },
     gift_claim: {
       executor: "constant-vus",
-      vus: 50,
-      duration: "30s",
+      vus: CLAIM_VUS,
+      duration: DURATION,
       exec: "claimGift",
+    },
+    dashboard_listing: {
+      executor: "constant-vus",
+      vus: DASHBOARD_VUS,
+      duration: DURATION,
+      exec: "listDashboard",
     },
   },
   thresholds: {
-    gift_creation_duration: ["p(95)<2000"],
-    gift_claim_duration: ["p(95)<3000"],
-    gift_creation_errors: ["rate<0.01"],
-    gift_claim_errors: ["rate<0.01"],
-    http_req_failed: ["rate<0.01"],
+    gift_creation_duration: [`p(95)<${P95_MS}`],
+    gift_claim_duration: [`p(95)<${P95_MS}`],
+    dashboard_listing_duration: [`p(95)<${P95_MS}`],
+    gift_creation_errors: [`rate<${ERROR_RATE}`],
+    gift_claim_errors: [`rate<${ERROR_RATE}`],
+    dashboard_listing_errors: [`rate<${ERROR_RATE}`],
+    http_req_failed: [`rate<${ERROR_RATE}`],
   },
 };
 
@@ -102,5 +128,18 @@ export function claimGift() {
   claimDuration.add(res.timings.duration);
   const ok = check(res, { "gift claimed (200)": (r) => r.status === 200 });
   claimErrors.add(!ok);
+  sleep(0.2);
+}
+
+// ─── Scenario: dashboard listing ──────────────────────────────────────────────
+export function listDashboard() {
+  const res = http.get(`${BASE_URL}/api/v1/gifts`, {
+    headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+    tags: { name: "GET /api/v1/gifts" },
+  });
+
+  dashboardDuration.add(res.timings.duration);
+  const ok = check(res, { "dashboard listed (200)": (r) => r.status === 200 });
+  dashboardErrors.add(!ok);
   sleep(0.2);
 }
