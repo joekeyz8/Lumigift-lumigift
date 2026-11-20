@@ -232,6 +232,9 @@ const envSchema = z.object({
   // Days an expired gift remains claimable before the escrow refund is processed
   GIFT_EXPIRY_GRACE_PERIOD_DAYS: z.coerce.number().int().nonnegative().default(7),
 
+  // Uploads
+  MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(10 * 1024 * 1024),
+
   // Cloudinary
   CLOUDINARY_CLOUD_NAME: z.string().min(1),
   CLOUDINARY_API_KEY: z.string().min(1),

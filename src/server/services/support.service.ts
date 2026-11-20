@@ -6,10 +6,139 @@
  * is the intentional source of truth here so no migration is required.
  */
 import type { SupportCase, SupportCaseMessage, SupportCaseStatus } from "@/types";
+import { createAuditLog } from "@/server/services/audit.service";
+import { findUsersByRole } from "@/server/services/user.service";
 
 // ─── In-memory store ──────────────────────────────────────────────────────────
 /** Primary index: caseReference → SupportCase */
 const caseStore = new Map<string, SupportCase>();
+
+/** Maximum number of open cases an agent may hold before being considered at capacity. */
+const MAX_OPEN_CASES_PER_AGENT = 20;
+
+/** Round-robin cursor: index into the sorted list of eligible agents. */
+let roundRobinCursor = 0;
+
+/** Support lead who receives alerts when no agent is available. */
+const SUPPORT_LEAD_ID = "support-lead";
+
+// ─── Assignment helpers ───────────────────────────────────────────────────────
+
+/** Returns the number of open cases currently assigned to the given agent. */
+function countOpenCasesForAgent(agentId: string): number {
+  let count = 0;
+  for (const c of caseStore.values()) {
+    if (c.assignedAgentId === agentId && c.status === "open") count += 1;
+  }
+  return count;
+}
+
+/**
+ * Selects the next agent for round-robin assignment.
+ *
+ * Eligible agents are users with the `support` role whose open-case count is
+ * below {@link MAX_OPEN_CASES_PER_AGENT}.  Selection advances a round-robin
+ * cursor over the (stable) sorted list of eligible agent IDs.
+ *
+ * @returns The selected agent ID, or `null` if no agent is available.
+ */
+function selectNextAgent(): string | null {
+  const eligible = findUsersByRole("support")
+    .filter((u) => countOpenCasesForAgent(u.id) < MAX_OPEN_CASES_PER_AGENT)
+    .map((u) => u.id)
+    .sort();
+
+  if (eligible.length === 0) return null;
+
+  const agentId = eligible[roundRobinCursor % eligible.length];
+  roundRobinCursor = (roundRobinCursor + 1) % eligible.length;
+  return agentId;
+}
+
+/**
+ * Sends an alert to the support lead when a case cannot be auto-assigned.
+ * In production this would dispatch an SMS/email; here it is logged.
+ */
+function alertSupportLead(supportCase: SupportCase): void {
+  console.warn(
+    `[support] No agent available for case ${supportCase.caseReference}; ` +
+      `flagged as unassigned. Alerting support lead ${SUPPORT_LEAD_ID}.`
+  );
+}
+
+/**
+ * Auto-assigns a newly-created support case to an available agent.
+ *
+ * On success the case is assigned and an audit log entry is written.  If no
+ * agent is available the case is flagged `unassigned` and the support lead is
+ * alerted.
+ *
+ * @param supportCase - The case to assign (mutated in place).
+ * @param actorId     - ID of the actor performing the assignment (system).
+ */
+export function assignSupportCase(supportCase: SupportCase, actorId = "system"): void {
+  const agentId = selectNextAgent();
+
+  if (!agentId) {
+    supportCase.status = "unassigned";
+    supportCase.assignedAgentId = undefined;
+    supportCase.updatedAt = new Date();
+    alertSupportLead(supportCase);
+    return;
+  }
+
+  supportCase.assignedAgentId = agentId;
+  supportCase.updatedAt = new Date();
+
+  createAuditLog({
+    eventType: "support_case_assigned",
+    actorId,
+    targetId: supportCase.caseReference,
+    metadata: { agentId, caseReference: supportCase.caseReference },
+  });
+}
+
+/**
+ * Reassigns an existing support case to a specific agent.
+ *
+ * Validates that the target user has the `support` role before updating the
+ * assignment and writing an audit log entry.
+ *
+ * @param caseReference - Reference of the case to reassign.
+ * @param agentId       - ID of the target support agent.
+ * @param actorId       - ID of the actor performing the reassignment.
+ * @returns The updated {@link SupportCase}.
+ * @throws If the case is not found or the target agent is invalid.
+ */
+export function reassignSupportCase(
+  caseReference: string,
+  agentId: string,
+  actorId: string
+): SupportCase {
+  const supportCase = caseStore.get(caseReference);
+  if (!supportCase) {
+    throw new Error(`Support case not found: ${caseReference}`);
+  }
+
+  const isSupportAgent = findUsersByRole("support").some((u) => u.id === agentId);
+  if (!isSupportAgent) {
+    throw new Error(`Invalid agent: ${agentId} does not have the support role`);
+  }
+
+  const previousAgentId = supportCase.assignedAgentId;
+  supportCase.assignedAgentId = agentId;
+  if (supportCase.status === "unassigned") supportCase.status = "open";
+  supportCase.updatedAt = new Date();
+
+  createAuditLog({
+    eventType: "support_case_assigned",
+    actorId,
+    targetId: supportCase.caseReference,
+    metadata: { agentId, previousAgentId, caseReference: supportCase.caseReference },
+  });
+
+  return supportCase;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -78,6 +207,7 @@ export function createSupportCase(
   };
 
   caseStore.set(supportCase.caseReference, supportCase);
+  assignSupportCase(supportCase);
   return supportCase;
 }
 

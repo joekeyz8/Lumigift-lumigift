@@ -9,11 +9,102 @@
  */
 
 import { encode, decode } from "next-auth/jwt";
+import { randomUUID } from "crypto";
+import { withRedis } from "@/lib/redis";
 
 /** Grace period in hours during which old tokens remain valid. */
 const ROTATION_GRACE_HOURS = parseInt(process.env.NEXTAUTH_ROTATION_GRACE_HOURS ?? "24", 10);
 
 const GRACE_MS = ROTATION_GRACE_HOURS * 60 * 60 * 1000;
+
+/** Prefix for denylisted refresh-token JTIs. */
+const DENYLIST_PREFIX = "jwt:denylist:";
+
+/** Default refresh-token lifetime in seconds (30 days). */
+const DEFAULT_REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+/**
+ * Add a refresh-token JTI to the Redis denylist for its remaining lifetime.
+ * Once the TTL elapses the key expires automatically, so the denylist stays
+ * bounded.
+ */
+export async function rotateRefreshToken(
+  oldJti: string,
+  remainingTtlSeconds: number,
+): Promise<void> {
+  if (!oldJti) return;
+  const ttl = Math.max(1, Math.floor(remainingTtlSeconds));
+  await withRedis((redis) => redis.set(`${DENYLIST_PREFIX}${oldJti}`, "1", "EX", ttl));
+}
+
+/** Returns true if the given refresh-token JTI has been revoked. */
+export async function isRefreshTokenDenylisted(jti: string): Promise<boolean> {
+  if (!jti) return false;
+  const value = await withRedis((redis) => redis.get(`${DENYLIST_PREFIX}${jti}`));
+  return value !== null && value !== undefined;
+}
+
+/** Generate a fresh refresh-token JTI. */
+export function generateRefreshJti(): string {
+  return randomUUID();
+}
+
+/**
+ * NextAuth `jwt` callback wrapper implementing refresh-token rotation.
+ *
+ * On every access-token refresh a new refresh-token JTI is issued and the old
+ * one is denylisted for its remaining TTL. If the incoming refresh token has
+ * already been denylisted (i.e. it was reused), the callback returns null so
+ * NextAuth responds with 401.
+ */
+export async function jwtCallback(params: {
+  token: Record<string, unknown> | null;
+  user?: unknown;
+  account?: unknown;
+  trigger?: "signIn" | "signUp" | "update";
+  [key: string]: unknown;
+}): Promise<Record<string, unknown> | null> {
+  const { token, trigger } = params;
+
+  // Initial sign-in: mint a refresh-token JTI.
+  if (!token) return token;
+
+  const incomingJti = typeof token.refreshJti === "string" ? token.refreshJti : undefined;
+
+  // Reject reused (denylisted) refresh tokens.
+  if (incomingJti && (await isRefreshTokenDenylisted(incomingJti))) {
+    return null;
+  }
+
+  // Only rotate on access-token refresh, not on sign-in/update.
+  const isRefresh = trigger !== "signIn" && trigger !== "signUp" && trigger !== "update";
+  if (!isRefresh) {
+    if (!incomingJti) {
+      return { ...token, refreshJti: generateRefreshJti() };
+    }
+    return token;
+  }
+
+  // Compute remaining TTL of the old refresh token.
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const exp = typeof token.refreshExp === "number" ? token.refreshExp : undefined;
+  const remainingTtl = exp ? exp - nowSeconds : DEFAULT_REFRESH_TTL_SECONDS;
+
+  // Denylist the old JTI (if any) for its remaining lifetime.
+  if (incomingJti) {
+    await rotateRefreshToken(incomingJti, remainingTtl);
+  }
+
+  // Issue a new refresh token JTI with a fresh expiry.
+  const newJti = generateRefreshJti();
+  const newExp = nowSeconds + DEFAULT_REFRESH_TTL_SECONDS;
+
+  return {
+    ...token,
+    refreshJti: newJti,
+    refreshExp: newExp,
+  };
+}
 
 export const jwtRotationOptions = {
   /**

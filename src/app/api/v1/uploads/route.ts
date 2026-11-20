@@ -5,7 +5,12 @@ import { authOptions } from "@/lib/auth";
 import { withErrorHandler, withCsrf } from "@/server/middleware";
 import type { ApiResponse } from "@/types";
 
-const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+const DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_BYTES = (() => {
+  const raw = process.env.MAX_UPLOAD_BYTES;
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_UPLOAD_BYTES;
+})();
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const UPLOAD_FOLDER = "gift-media";
 // Incoming transformation: Cloudinary re-encodes the stored original, which
@@ -55,10 +60,57 @@ export const POST = withErrorHandler(
       );
     }
 
+    // Reject oversized requests before reading the body into memory.
+    const contentLength = req.headers.get("content-length");
+    if (contentLength !== null) {
+      const declared = Number.parseInt(contentLength, 10);
+      if (Number.isFinite(declared) && declared > MAX_BYTES) {
+        return NextResponse.json<ApiResponse<never>>(
+          { success: false, error: "Request body exceeds the upload size limit" },
+          { status: 413 }
+        );
+      }
+    }
+
+    // Stream the body through a byte counter so we never buffer past the cap,
+    // even when Content-Length is missing or understated.
     let formData: FormData;
     try {
-      formData = await req.formData();
-    } catch {
+      const body = req.body;
+      if (!body) {
+        return NextResponse.json<ApiResponse<never>>(
+          { success: false, error: "Request must be multipart/form-data" },
+          { status: 400 }
+        );
+      }
+      let received = 0;
+      let exceeded = false;
+      const counted = body.pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, controller) {
+            received += chunk.byteLength;
+            if (received > MAX_BYTES) {
+              exceeded = true;
+              controller.error(new Error("UPLOAD_TOO_LARGE"));
+              return;
+            }
+            controller.enqueue(chunk);
+          },
+        })
+      );
+      const contentType = req.headers.get("content-type") ?? "";
+      const buffered = new Response(counted, {
+        headers: { "content-type": contentType },
+      });
+      formData = await buffered.formData();
+      if (exceeded) throw new Error("UPLOAD_TOO_LARGE");
+    } catch (err) {
+      if (err instanceof Error && err.message === "UPLOAD_TOO_LARGE") {
+        return NextResponse.json<ApiResponse<never>>(
+          { success: false, error: "Request body exceeds the upload size limit" },
+          { status: 413 }
+        );
+      }
       return NextResponse.json<ApiResponse<never>>(
         { success: false, error: "Request must be multipart/form-data" },
         { status: 400 }
@@ -80,15 +132,15 @@ export const POST = withErrorHandler(
           success: false,
           error: `Invalid file type "${file.type}". Allowed: jpeg, png, webp, gif`,
         },
-        { status: 422 }
+        { status: 415 }
       );
     }
 
     // Validate file size before upload
     if (file.size > MAX_BYTES) {
       return NextResponse.json<ApiResponse<never>>(
-        { success: false, error: "File exceeds the 5 MB size limit" },
-        { status: 422 }
+        { success: false, error: "File exceeds the upload size limit" },
+        { status: 413 }
       );
     }
 

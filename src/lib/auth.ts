@@ -11,7 +11,12 @@ import { normalizePhone } from "@/lib/phone";
 import { verifyOtp } from "@/lib/otp";
 import { verifyAuthentication } from "@/lib/webauthn";
 import { serviceLogger } from "@/lib/logger";
-import { jwtRotationOptions } from "@/lib/jwt-rotation";
+import {
+  jwtRotationOptions,
+  isRefreshTokenRevoked,
+  revokeRefreshToken,
+  issueRefreshToken,
+} from "@/lib/jwt-rotation";
 
 const log = serviceLogger("auth");
 
@@ -171,9 +176,25 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
+        // Initial sign-in — establish identity and issue the first refresh token.
         token.id = user.id;
         token.phone = (user as { phone?: string }).phone;
+        token.refreshJti = await issueRefreshToken(token.id as string);
+        return token;
       }
+
+      // Subsequent calls are access-token refreshes. Rotate the refresh token:
+      // reject reuse of a denylisted jti, otherwise denylist the old jti for its
+      // remaining TTL and issue a fresh one.
+      const oldJti = token.refreshJti as string | undefined;
+      if (oldJti) {
+        if (await isRefreshTokenRevoked(oldJti)) {
+          // Reused / revoked refresh token — invalidate the session (401).
+          throw new Error("Refresh token has been revoked");
+        }
+        await revokeRefreshToken(oldJti);
+      }
+      token.refreshJti = await issueRefreshToken(token.id as string);
       return token;
     },
     async session({ session, token }) {

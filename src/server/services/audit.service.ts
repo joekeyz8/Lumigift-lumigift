@@ -16,7 +16,13 @@ export type AuditEventType =
   | "data_export_requested"
   | "data_deletion_requested"
   | "data_deletion_completed"
-  | "data_deletion_rejected";
+  | "data_deletion_rejected"
+  // Support case assignment (Issue #520)
+  | "support_case_assigned"
+  | "support_case_unassigned"
+  | "support_case_reassigned"
+  // Duplicate registration attempt (Issue #522)
+  | "registration_duplicate_attempt";
 
 export interface AuditLogEntry {
   eventType: AuditEventType;

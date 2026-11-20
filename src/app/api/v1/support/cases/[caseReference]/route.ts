@@ -12,6 +12,7 @@ import {
   addSupportCaseMessage,
   getSupportCase,
   markSupportCaseRead,
+  reassignSupportCase,
 } from "@/server/services/support.service";
 import type { ApiResponse, SupportCase } from "@/types";
 
@@ -52,5 +53,30 @@ export const POST = withErrorHandler(
       { success: true, data: updated! },
       { status: 201 }
     );
+  })
+);
+
+/** Body: `{ agentId: string }` — agent/admin reassignment of a support case. */
+export const PATCH = withErrorHandler(
+  withAuth(async (req: NextRequest, context?: unknown) => {
+    const session = await getServerSession(authOptions);
+    const role = (session!.user as { role?: string }).role;
+    if (role !== "support" && role !== "admin") {
+      throw new AppError(ERROR_CODES.FORBIDDEN, "Only support agents can reassign cases", 403);
+    }
+
+    const { caseReference } = await (context as Context).params;
+    const payload = await req.json().catch(() => null);
+
+    if (!payload || typeof payload.agentId !== "string" || !payload.agentId.trim()) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "agentId is required", 400);
+    }
+
+    if (!getSupportCase(caseReference)) {
+      throw new AppError(ERROR_CODES.NOT_FOUND, "Support case not found", 404);
+    }
+
+    const updated = reassignSupportCase(caseReference, payload.agentId.trim());
+    return NextResponse.json<ApiResponse<SupportCase>>({ success: true, data: updated! });
   })
 );
