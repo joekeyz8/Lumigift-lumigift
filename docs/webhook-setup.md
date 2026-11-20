@@ -2,6 +2,12 @@
 
 > Closes #113
 
+> **Note:** This document covers internal payment-provider webhook setup
+> (Paystack and Stripe). For third-party/B2B partners, see the
+> [partner webhook integration guide](./webhooks-partner-guide.md), which covers
+> gift lifecycle event types, payload schemas, signature verification, retry
+> policy, rate limits, and security requirements.
+
 Lumigift uses two payment providers: **Paystack** (Nigerian Naira, NGN) and
 **Stripe** (international cards). Both providers send webhook events to notify
 the platform of payment outcomes.
@@ -231,3 +237,12 @@ All three variables must be set in:
 **Never** commit these values to source control. The `.env.local` file is in
 `.gitignore`. For CI, use GitHub Actions secrets referenced as
 `${{ secrets.VARIABLE_NAME }}` in workflow files.
+
+---
+
+## Related Documents
+
+- [Partner Webhook Integration Guide](./webhooks-partner-guide.md) — partner-facing
+  guide to subscribing to Lumigift gift lifecycle webhooks (event types, payload
+  schemas, signature verification, retry policy, rate limits, security).
+- [API Authentication and Errors](./api-auth-and-errors.md)

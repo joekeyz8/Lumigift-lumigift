@@ -1,5 +1,19 @@
 import type { GiftStatus } from "@/types";
 
+/**
+ * Gift state machine.
+ *
+ * The allowed transitions between {@link GiftStatus} values are visualised in
+ * the state diagram at `docs/architecture/gift-state-machine.md` (Mermaid).
+ * That document also lists the invalid transitions and their error codes.
+ *
+ * Invalid transitions are rejected by {@link assertValidTransition}, which
+ * throws an `Error`; at the API boundary this surfaces as the
+ * `GIFT_INVALID_STATE` error code with HTTP status `409 Conflict`.
+ *
+ * @see docs/architecture/gift-state-machine.md
+ */
+
 // Valid transitions: from → Set<to>
 // Each status only allows specific forward (and cancel) transitions to prevent
 // invalid state changes such as re-funding a claimed gift.
@@ -24,6 +38,7 @@ const TRANSITIONS: Record<GiftStatus, Set<GiftStatus>> = {
  * @param current - The gift's current {@link GiftStatus}.
  * @param next - The desired target {@link GiftStatus}.
  * @returns `true` if the transition is allowed, `false` otherwise.
+ * @see docs/architecture/gift-state-machine.md for the full state diagram.
  */
 export function isValidTransition(current: GiftStatus, next: GiftStatus): boolean {
   return TRANSITIONS[current]?.has(next) ?? false;
@@ -37,6 +52,8 @@ export function isValidTransition(current: GiftStatus, next: GiftStatus): boolea
  * @param current - The gift's current {@link GiftStatus}.
  * @param next - The desired target {@link GiftStatus}.
  * @throws `Error` with a human-readable message if the transition is invalid.
+ *   At the API boundary this is reported as `GIFT_INVALID_STATE` (HTTP 409).
+ * @see docs/architecture/gift-state-machine.md for the full state diagram.
  */
 export function assertValidTransition(current: GiftStatus, next: GiftStatus): void {
   if (!isValidTransition(current, next)) {
