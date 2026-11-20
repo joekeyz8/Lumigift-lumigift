@@ -92,6 +92,7 @@ impl Fixture {
             &self.token_id,
             &AMOUNT,
             &UNLOCK_TIME,
+            &None,
         );
     }
 
@@ -123,11 +124,16 @@ fn op_cancel(f: &Fixture) {
     f.client().cancel();
 }
 
+fn op_extend_ttl(f: &Fixture) {
+    f.client().extend_ttl();
+}
+
 /// (name, needs prior initialize, operation)
-const OPERATIONS: [(&str, bool, fn(&Fixture)); 3] = [
+const OPERATIONS: [(&str, bool, fn(&Fixture)); 4] = [
     ("initialize", false, op_initialize),
     ("claim", true, op_claim),
     ("cancel", true, op_cancel),
+    ("extend_ttl", true, op_extend_ttl),
 ];
 
 fn fixture_for(needs_init: bool) -> Fixture {

@@ -35,6 +35,8 @@ export enum EscrowError {
   InvalidUnlockTime = 8,
   /** The supplied token address is not an allowed USDC contract for this network. */
   InvalidToken = 9,
+  /** The sender does not hold enough of the token to fund the escrow. */
+  InsufficientBalance = 10,
 }
 
 export class EscrowContractError extends Error {
@@ -107,15 +109,24 @@ export class EscrowClient {
    * @param token       - USDC contract address (C…)
    * @param amount      - Amount in stroops (i128)
    * @param unlockTime  - Unix timestamp (u64) after which the gift can be claimed
+   * @param gracePeriodSecs - Optional grace window (u64) after `unlockTime` during
+   *                          which claims are still allowed. Omitted ⇒ contract
+   *                          default of 0 (claims only at/after `unlockTime`).
    */
   async buildInitialize(
     sender: string,
     recipient: string,
     token: string,
     amount: bigint,
-    unlockTime: bigint
+    unlockTime: bigint,
+    gracePeriodSecs?: bigint
   ): Promise<string> {
     const account = await this.rpc.getAccount(this.opts.sourcePublicKey);
+
+    const gracePeriodScVal =
+      gracePeriodSecs === undefined
+        ? xdr.ScVal.scvVoid()
+        : nativeToScVal(gracePeriodSecs, { type: "u64" });
 
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -128,7 +139,8 @@ export class EscrowClient {
           new Address(recipient).toScVal(),
           new Address(token).toScVal(),
           nativeToScVal(amount, { type: "i128" }),
-          nativeToScVal(unlockTime, { type: "u64" })
+          nativeToScVal(unlockTime, { type: "u64" }),
+          gracePeriodScVal
         )
       )
       .setTimeout(30)

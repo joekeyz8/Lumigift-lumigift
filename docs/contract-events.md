@@ -13,12 +13,16 @@ The contract emits events via `env.events().publish(topics, data)` at the end
 of each state-mutating function. Events are stored on the Stellar ledger and
 are queryable via the Soroban RPC `getEvents` endpoint.
 
-| Event name    | Emitted by    | Lifecycle state transition     |
-|---------------|---------------|-------------------------------|
-| `initialized` | `initialize`  | Uninitialized → Locked         |
-| `claimed`     | `claim`       | Unlocked → Claimed (terminal)  |
-| `cancelled`   | `cancel`      | Locked / Unlocked → Cancelled  |
-| `upgraded`    | `upgrade`     | Admin-only contract upgrade    |
+| Event name    | Topic symbol  | Emitted by    | Lifecycle state transition     |
+|---------------|---------------|---------------|-------------------------------|
+| `initialized` | `initialized` | `initialize`  | Uninitialized → Locked         |
+| `claimed`     | `claimed`     | `claim`       | Unlocked → Claimed (terminal)  |
+| `cancelled`   | `cancelled`   | `cancel`      | Locked / Unlocked → Cancelled  |
+| `upgraded`    | `upgraded`    | `upgrade`     | Admin-only contract upgrade    |
+
+All four events are decoded by `src/lib/contracts/escrow-events.ts`; the
+decoder's topic symbols, `ScVec` field order, and TypeScript types match the
+schema documented below exactly.
 
 ---
 
@@ -41,6 +45,21 @@ ContractEvent {
   for contract IDs, `ScAddressTypeAccount` for G-addresses).
 - `i128` values are encoded as `ScVal::I128`.
 - `u64` values are encoded as `ScVal::U64`.
+- `BytesN<32>` values are encoded as `ScVal::Bytes` with a 32-byte payload.
+
+### XDR type references
+
+| Soroban type   | XDR union / arm                                  | Notes                                   |
+|----------------|--------------------------------------------------|-----------------------------------------|
+| `Symbol`       | `ScVal::Symbol(ScSymbol)`                        | Event name / topic discriminant         |
+| `ScAddress`    | `ScVal::Address(ScAddress)`                      | `ScAddressTypeAccount` or `ScAddressTypeContract` |
+| `I128`         | `ScVal::I128(Int128Parts { hi, lo })`            | Two's-complement 128-bit integer        |
+| `U64`          | `ScVal::U64(u64)`                                | Unsigned 64-bit integer                 |
+| `Bytes(32)`    | `ScVal::Bytes(ScBytes)`                          | Fixed 32-byte payload (`BytesN<32>`)    |
+| `ScVec`        | `ScVal::Vec(Some(ScVec))`                        | Ordered payload container               |
+
+The full XDR definitions live in `stellar-xdr` (`Stellar-contract.x`):
+`ContractEvent`, `ScVal`, `ScAddress`, `Int128Parts`, `ScSymbol`, `ScBytes`.
 
 ---
 

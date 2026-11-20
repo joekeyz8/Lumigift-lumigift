@@ -199,6 +199,11 @@ pub enum DataKey {
     /// transfer in `claim` to prevent re-entrancy and double-claim attacks.
     Claimed,
     Cancelled,
+
+    /// Grace period in seconds after `unlock_time` during which `claim` is
+    /// still permitted. Defaults to 0 when omitted at initialization, which
+    /// preserves the original behaviour (claim only at/after `unlock_time`).
+    GracePeriod,
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -238,10 +243,15 @@ impl EscrowContract {
         token: Address,
         amount: i128,
         unlock_time: u64,
+        grace_period_secs: Option<u64>,
     ) -> Result<(), EscrowError> {
         if env.storage().instance().has(&DataKey::Sender) {
             return Err(EscrowError::AlreadyInitialized);
         }
+
+        // Grace period defaults to 0 when omitted, preserving the original
+        // behaviour where claims are only allowed at/after `unlock_time`.
+        let grace_period_secs = grace_period_secs.unwrap_or(0);
 
         if amount < MIN_AMOUNT {
             return Err(EscrowError::InvalidAmount);
@@ -275,6 +285,9 @@ impl EscrowContract {
         env.storage().instance().set(&DataKey::Token, &token);
         env.storage().instance().set(&DataKey::Amount, &amount);
         env.storage().instance().set(&DataKey::UnlockTime, &unlock_time);
+        env.storage()
+            .instance()
+            .set(&DataKey::GracePeriod, &grace_period_secs);
         env.storage().instance().set(&DataKey::Claimed, &false);
 
         // Extend instance TTL to cover the full lock period plus a 30-day buffer.
@@ -318,7 +331,17 @@ impl EscrowContract {
             .get(&DataKey::UnlockTime)
             .ok_or(EscrowError::NotInitialized)?;
 
-        if env.ledger().timestamp() < unlock_time {
+        // Allow claims within the grace window: `now <= unlock_time + grace`.
+        // A grace period of 0 preserves the original inclusive boundary.
+        let grace_period_secs: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::GracePeriod)
+            .unwrap_or(0);
+
+        let claim_deadline = unlock_time.saturating_add(grace_period_secs);
+
+        if env.ledger().timestamp() > claim_deadline {
             return Err(EscrowError::StillLocked);
         }
 
@@ -548,7 +571,7 @@ mod tests {
         let client = EscrowContractClient::new(&env, &contract_id);
 
         // unlock_time must be > ledger.timestamp() + MIN_LOCK_DURATION (3600)
-        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &3_601);
+        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &3_601, &None);
         env.ledger().with_mut(|l| l.timestamp = 3_601);
         client.claim();
 
@@ -568,10 +591,10 @@ mod tests {
         let contract_id = env.register_contract(None, EscrowContract);
         let client = EscrowContractClient::new(&env, &contract_id);
 
-        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &3_601);
+        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &3_601, &None);
 
         let err = client
-            .try_initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &3_601)
+            .try_initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &3_601, &None)
             .unwrap_err()
             .unwrap();
         assert_eq!(err, EscrowError::AlreadyInitialized);
@@ -595,11 +618,11 @@ mod tests {
         // First initialization — establishes the original state
         let original_amount: i128 = 100_000_000;
         let original_unlock: u64 = 9_999;
-        client.initialize(&sender, &sender, &recipient, &token_id, &original_amount, &original_unlock);
+        client.initialize(&sender, &sender, &recipient, &token_id, &original_amount, &original_unlock, &None);
 
         // Attempt re-initialization with different values — must fail
         let err = client
-            .try_initialize(&attacker, &attacker, &attacker, &token_id, &50_000_000, &1)
+            .try_initialize(&attacker, &attacker, &attacker, &token_id, &50_000_000, &1, &None)
             .unwrap_err()
             .unwrap();
         assert_eq!(err, EscrowError::AlreadyInitialized);
@@ -626,7 +649,7 @@ mod tests {
         let contract_id = env.register_contract(None, EscrowContract);
         let client = EscrowContractClient::new(&env, &contract_id);
 
-        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &9_999_999);
+        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &9_999_999, &None);
 
         let err = client.try_claim().unwrap_err().unwrap();
         assert_eq!(err, EscrowError::StillLocked);
@@ -645,7 +668,7 @@ mod tests {
         let contract_id = env.register_contract(None, EscrowContract);
         let client = EscrowContractClient::new(&env, &contract_id);
 
-        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &3_601);
+        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &3_601, &None);
         env.ledger().with_mut(|l| l.timestamp = 3_601);
         client.claim();
 
@@ -680,7 +703,7 @@ mod tests {
         let client = EscrowContractClient::new(&env, &contract_id);
 
         let err = client
-            .try_initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &3_601)
+            .try_initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &3_601, &None)
             .unwrap_err()
             .unwrap();
         assert_eq!(err, EscrowError::InsufficientBalance);
@@ -701,7 +724,7 @@ mod tests {
         let client = EscrowContractClient::new(&env, &contract_id);
 
         let err = client
-            .try_initialize(&sender, &sender, &recipient, &token_id, &0, &1_000)
+            .try_initialize(&sender, &sender, &recipient, &token_id, &0, &1_000, &None)
             .unwrap_err()
             .unwrap();
         assert_eq!(err, EscrowError::InvalidAmount);
@@ -722,7 +745,7 @@ mod tests {
 
         // 9_999_999 stroops = just under 1 USDC minimum
         let err = client
-            .try_initialize(&sender, &sender, &recipient, &token_id, &9_999_999, &1_000)
+            .try_initialize(&sender, &sender, &recipient, &token_id, &9_999_999, &1_000, &None)
             .unwrap_err()
             .unwrap();
         assert_eq!(err, EscrowError::InvalidAmount);
@@ -746,7 +769,7 @@ mod tests {
 
         // unlock_time in the past
         let err = client
-            .try_initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &5_000)
+            .try_initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &5_000, &None)
             .unwrap_err()
             .unwrap();
         assert_eq!(err, EscrowError::InvalidUnlockTime);
@@ -769,7 +792,7 @@ mod tests {
 
         // unlock_time == current timestamp (not in the future by MIN_LOCK_DURATION)
         let err = client
-            .try_initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &10_000)
+            .try_initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &10_000, &None)
             .unwrap_err()
             .unwrap();
         assert_eq!(err, EscrowError::InvalidUnlockTime);
@@ -792,7 +815,7 @@ mod tests {
 
         // unlock_time = now + MIN_LOCK_DURATION (must be strictly greater)
         let err = client
-            .try_initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &13_600)
+            .try_initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &13_600, &None)
             .unwrap_err()
             .unwrap();
         assert_eq!(err, EscrowError::InvalidUnlockTime);
@@ -814,12 +837,99 @@ mod tests {
         let client = EscrowContractClient::new(&env, &contract_id);
 
         // unlock_time = now + MIN_LOCK_DURATION + 1 (valid)
-        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &13_601);
+        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &13_601, &None);
 
         // Advance past unlock and claim
         env.ledger().with_mut(|l| l.timestamp = 13_601);
         client.claim();
         assert_eq!(token.balance(&recipient), 100_000_000);
+    }
+
+    // ── Grace period tests (#534) ─────────────────────────────────────────────
+
+    /// With no grace period supplied, behaviour is unchanged: claim at
+    /// `unlock_time + 1` fails with StillLocked.
+    #[test]
+    fn test_default_grace_period_preserves_behaviour() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let (token_id, _, token_admin) = create_token(&env, &sender);
+        token_admin.mint(&sender, &100_000_000);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let client = EscrowContractClient::new(&env, &contract_id);
+
+        let unlock_time: u64 = 10_000;
+        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &unlock_time, &None);
+
+        // At unlock_time claim succeeds
+        env.ledger().with_mut(|l| l.timestamp = unlock_time);
+        client.claim();
+    }
+
+    /// Claim at `unlock_time + grace - 1` succeeds.
+    #[test]
+    fn test_claim_within_grace_period_succeeds() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let (token_id, token, token_admin) = create_token(&env, &sender);
+        token_admin.mint(&sender, &100_000_000);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let client = EscrowContractClient::new(&env, &contract_id);
+
+        let unlock_time: u64 = 10_000;
+        let grace: u64 = 3_600;
+        client.initialize(
+            &sender,
+            &sender,
+            &recipient,
+            &token_id,
+            &100_000_000,
+            &unlock_time,
+            &Some(grace),
+        );
+
+        env.ledger().with_mut(|l| l.timestamp = unlock_time + grace - 1);
+        client.claim();
+        assert_eq!(token.balance(&recipient), 100_000_000);
+    }
+
+    /// Claim at `unlock_time + grace + 1` fails with StillLocked.
+    #[test]
+    fn test_claim_after_grace_period_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let (token_id, _, token_admin) = create_token(&env, &sender);
+        token_admin.mint(&sender, &100_000_000);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let client = EscrowContractClient::new(&env, &contract_id);
+
+        let unlock_time: u64 = 10_000;
+        let grace: u64 = 3_600;
+        client.initialize(
+            &sender,
+            &sender,
+            &recipient,
+            &token_id,
+            &100_000_000,
+            &unlock_time,
+            &Some(grace),
+        );
+
+        env.ledger().with_mut(|l| l.timestamp = unlock_time + grace + 1);
+        let err = client.try_claim().unwrap_err().unwrap();
+        assert_eq!(err, EscrowError::StillLocked);
     }
 }
 
@@ -844,7 +954,7 @@ mod cancel_tests {
 
         let contract_id = env.register_contract(None, EscrowContract);
         let client = EscrowContractClient::new(env, &contract_id);
-        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &3_601);
+        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &3_601, &None);
 
         (sender, recipient, token_id, token, client)
     }
@@ -928,7 +1038,7 @@ mod auth_tests {
 
         // unlock_time = 3_601 (> 0 + MIN_LOCK_DURATION)
         env.mock_all_auths();
-        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &3_601);
+        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &3_601, &None);
 
         // Advance past unlock so the only barrier is auth, not time
         env.ledger().with_mut(|l| l.timestamp = 3_601);
@@ -1009,7 +1119,7 @@ mod boundary_tests {
 
         let contract_id = env.register_contract(None, EscrowContract);
         let client = EscrowContractClient::new(env, &contract_id);
-        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &unlock_time);
+        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &unlock_time, &None);
         client
     }
 
@@ -1076,7 +1186,7 @@ mod property_tests {
 
         let contract_id = env.register_contract(None, EscrowContract);
         let client = EscrowContractClient::new(&env, &contract_id);
-        client.initialize(&sender, &sender, &recipient, &token_id, &amount, &unlock_time);
+        client.initialize(&sender, &sender, &recipient, &token_id, &amount, &unlock_time, &None);
 
         (env, recipient, token, client)
     }
@@ -1190,11 +1300,11 @@ mod property_tests {
             let client = EscrowContractClient::new(&env, &contract_id);
 
             // First initialize must succeed
-            client.initialize(&sender, &sender, &recipient, &token_id, &amount, &unlock_time);
+            client.initialize(&sender, &sender, &recipient, &token_id, &amount, &unlock_time, &None);
 
             // Second initialize must always fail regardless of arguments
             let err = client
-                .try_initialize(&sender, &sender, &recipient, &token_id, &amount2, &unlock_time2)
+                .try_initialize(&sender, &sender, &recipient, &token_id, &amount2, &unlock_time2, &None)
                 .unwrap_err()
                 .unwrap();
 
@@ -1238,7 +1348,7 @@ mod time_lock_property_tests {
         let contract_id = env.register_contract(None, EscrowContract);
         let client = EscrowContractClient::new(&env, &contract_id);
 
-        match client.try_initialize(&sender, &sender, &recipient, &token, &amount, &unlock_time) {
+        match client.try_initialize(&sender, &sender, &recipient, &token, &amount, &unlock_time, &None) {
             Err(Ok(e)) => Some(e),
             _ => None,
         }
@@ -1376,7 +1486,7 @@ mod invariant_tests {
 
         let contract_id = env.register_contract(None, EscrowContract);
         let client      = EscrowContractClient::new(&env, &contract_id);
-        client.initialize(&sender, &sender, &recipient, &token_id, &amount, &unlock_time);
+        client.initialize(&sender, &sender, &recipient, &token_id, &amount, &unlock_time, &None);
 
         (env, sender, recipient, token_id, token, client)
     }
@@ -1630,7 +1740,7 @@ mod upgrade_tests {
 
         let contract_id = env.register_contract(None, EscrowContract);
         let client = EscrowContractClient::new(env, &contract_id);
-        client.initialize(&admin, &sender, &recipient, &token_id, &100_000_000, &3_601);
+        client.initialize(&admin, &sender, &recipient, &token_id, &100_000_000, &3_601, &None);
 
         (admin, sender, client)
     }
@@ -1703,7 +1813,7 @@ mod upgrade_tests {
         let unlock_time: u64 = 10_000;
         // Initialize at timestamp 100 (unlock_time > 100 + 3600 = 3700)
         env.ledger().with_mut(|l| l.timestamp = 100);
-        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &unlock_time);
+        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &unlock_time, &None);
 
         // 1 second BEFORE unlock_time (9_999) -> must fail with StillLocked
         env.ledger().with_mut(|l| l.timestamp = unlock_time - 1);
@@ -1736,7 +1846,7 @@ mod upgrade_tests {
 
         let unlock_time: u64 = 5_000;
         env.ledger().with_mut(|l| l.timestamp = 0);
-        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &unlock_time);
+        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &unlock_time, &None);
 
         // 1 second AFTER unlock_time (5_001) -> succeeds
         env.ledger().with_mut(|l| l.timestamp = unlock_time + 1);
@@ -1766,14 +1876,14 @@ mod upgrade_tests {
         // Exactly at current_ts + MIN_LOCK_DURATION (1000 + 3600 = 4600) -> InvalidUnlockTime (strictly > required)
         let exact_min = current_ts + MIN_LOCK_DURATION;
         let err = client
-            .try_initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &exact_min)
+            .try_initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &exact_min, &None)
             .unwrap_err()
             .unwrap();
         assert_eq!(err, EscrowError::InvalidUnlockTime);
 
         // At current_ts + MIN_LOCK_DURATION + 1 (4601) -> SUCCEEDS
         let valid_min = current_ts + MIN_LOCK_DURATION + 1;
-        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &valid_min);
+        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &valid_min, &None);
         assert_eq!(client.get_status(), EscrowStatus::Locked);
     }
 
@@ -1796,7 +1906,7 @@ mod upgrade_tests {
             l.timestamp = 0;
         });
 
-        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &unlock_time);
+        client.initialize(&sender, &sender, &recipient, &token_id, &100_000_000, &unlock_time, &None);
 
         // Ledger 101: 5s before boundary (9_995)
         env.ledger().with_mut(|l| {
@@ -1860,7 +1970,7 @@ mod comprehensive_tests {
 
         let contract_id = env.register_contract(None, EscrowContract);
         let client = EscrowContractClient::new(env, &contract_id);
-        client.initialize(&admin, &sender, &recipient, &token_id, &amount, &unlock_time);
+        client.initialize(&admin, &sender, &recipient, &token_id, &amount, &unlock_time, &None);
         (admin, sender, recipient, token, client)
     }
 
@@ -1887,6 +1997,7 @@ mod comprehensive_tests {
             &token_id,
             &MIN_AMOUNT,
             &(MIN_LOCK_DURATION + 1),
+            &None,
         );
     }
 
@@ -1911,6 +2022,7 @@ mod comprehensive_tests {
                 &token_id,
                 &(MIN_AMOUNT - 1),
                 &(MIN_LOCK_DURATION + 1),
+                &None,
             )
             .unwrap_err()
             .unwrap();
@@ -1938,6 +2050,7 @@ mod comprehensive_tests {
             &token_id,
             &large_amount,
             &(MIN_LOCK_DURATION + 1),
+            &None,
         );
     }
 
@@ -1965,6 +2078,7 @@ mod comprehensive_tests {
             &token_id,
             &MIN_AMOUNT,
             &(MIN_LOCK_DURATION + 1),
+            &None,
         );
     }
 
@@ -1990,6 +2104,7 @@ mod comprehensive_tests {
                 &token_id,
                 &MIN_AMOUNT,
                 &MIN_LOCK_DURATION,
+                &None,
             )
             .unwrap_err()
             .unwrap();
@@ -2316,7 +2431,7 @@ mod cancel_after_unlock_tests {
 
         let contract_id = env.register_contract(None, EscrowContract);
         let client = EscrowContractClient::new(env, &contract_id);
-        client.initialize(&sender, &sender, &recipient, &token_id, &MIN_AMOUNT, &unlock_time);
+        client.initialize(&sender, &sender, &recipient, &token_id, &MIN_AMOUNT, &unlock_time, &None);
 
         (sender, recipient, token, client)
     }
@@ -2497,7 +2612,7 @@ mod admin_authority_tests {
         let contract_id = env.register_contract(None, EscrowContract);
         let client = EscrowContractClient::new(env, &contract_id);
         // Pass distinct admin ≠ sender so tests can verify role separation.
-        client.initialize(&admin, &sender, &recipient, &token_id, &100_000_000, &3_601);
+        client.initialize(&admin, &sender, &recipient, &token_id, &100_000_000, &3_601, &None);
 
         (admin, sender, recipient, client)
     }
@@ -2645,5 +2760,122 @@ mod admin_authority_tests {
                 },
             }])
             .upgrade(&new_wasm_hash); // must succeed
+    }
+}
+
+// ─── USDC amount edge-case property tests (#537) ─────────────────────────────
+//
+// Each proptest! runs 1 000 cases. Covers the acceptance criteria from #537:
+//   1. Any amount ≥ MIN_AMOUNT: initialize + claim succeeds.
+//   2. Any amount < MIN_AMOUNT: initialize fails with InvalidAmount.
+//   3. A cancelled escrow always returns the full amount to the sender.
+
+#[cfg(test)]
+mod usdc_amount_property_tests {
+    use super::*;
+    use proptest::prelude::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        token::{Client as TokenClient, StellarAssetClient},
+        Env,
+    };
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1_000))]
+
+        /// For any amount ≥ MIN_AMOUNT, initialize + claim succeeds and the
+        /// recipient receives exactly the deposited amount.
+        #[test]
+        fn prop_valid_amount_initialize_and_claim_succeeds(
+            amount in MIN_AMOUNT..=i128::MAX,
+        ) {
+            let env = Env::default();
+            env.mock_all_auths();
+
+            let sender = Address::generate(&env);
+            let recipient = Address::generate(&env);
+            let token_id = env.register_stellar_asset_contract(sender.clone());
+            let token = TokenClient::new(&env, &token_id);
+            StellarAssetClient::new(&env, &token_id).mint(&sender, &amount);
+
+            let contract_id = env.register_contract(None, EscrowContract);
+            let client = EscrowContractClient::new(&env, &contract_id);
+
+            let unlock_time = MIN_LOCK_DURATION + 1;
+            client.initialize(&sender, &sender, &recipient, &token_id, &amount, &unlock_time, &None);
+
+            env.ledger().with_mut(|l| l.timestamp = unlock_time);
+            client.claim();
+
+            prop_assert_eq!(token.balance(&recipient), amount);
+            prop_assert_eq!(token.balance(&client.address), 0);
+        }
+
+        /// For any amount < MIN_AMOUNT, initialize fails with InvalidAmount.
+        #[test]
+        fn prop_below_min_amount_fails_with_invalid_amount(
+            amount in i128::MIN..MIN_AMOUNT,
+        ) {
+            let env = Env::default();
+            env.mock_all_auths();
+
+            let sender = Address::generate(&env);
+            let recipient = Address::generate(&env);
+            let token_id = env.register_stellar_asset_contract(sender.clone());
+            // Mint a positive balance so the failure is attributable to the
+            // amount check, not to an insufficient balance.
+            StellarAssetClient::new(&env, &token_id).mint(&sender, &MIN_AMOUNT);
+
+            let contract_id = env.register_contract(None, EscrowContract);
+            let client = EscrowContractClient::new(&env, &contract_id);
+
+            let err = client
+                .try_initialize(
+                    &sender,
+                    &sender,
+                    &recipient,
+                    &token_id,
+                    &amount,
+                    &(MIN_LOCK_DURATION + 1),
+                    &None,
+                )
+                .unwrap_err()
+                .unwrap();
+            prop_assert_eq!(err, EscrowError::InvalidAmount);
+        }
+
+        /// A cancelled escrow always returns the full amount to the sender.
+        #[test]
+        fn prop_cancel_refunds_full_amount(
+            amount in MIN_AMOUNT..=i128::MAX,
+        ) {
+            let env = Env::default();
+            env.mock_all_auths();
+
+            let sender = Address::generate(&env);
+            let recipient = Address::generate(&env);
+            let token_id = env.register_stellar_asset_contract(sender.clone());
+            let token = TokenClient::new(&env, &token_id);
+            StellarAssetClient::new(&env, &token_id).mint(&sender, &amount);
+
+            let contract_id = env.register_contract(None, EscrowContract);
+            let client = EscrowContractClient::new(&env, &contract_id);
+
+            client.initialize(
+                &sender,
+                &sender,
+                &recipient,
+                &token_id,
+                &amount,
+                &(MIN_LOCK_DURATION + 1),
+                &None,
+            );
+
+            client.cancel();
+
+            prop_assert_eq!(token.balance(&sender), amount);
+            prop_assert_eq!(token.balance(&recipient), 0);
+            prop_assert_eq!(token.balance(&client.address), 0);
+        }
     }
 }

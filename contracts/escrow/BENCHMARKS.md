@@ -11,11 +11,24 @@ cargo bench --manifest-path contracts/escrow/Cargo.toml
 
 ---
 
+## Methodology: Soroban CPU instruction units
+
+Soroban meters execution in **CPU instructions** — a deterministic count of
+host and Wasm operations charged by the Soroban host, independent of wall-clock
+time or machine speed. Each benchmarked entry point is invoked once through the
+Soroban test environment (`soroban_sdk::Env` with `testutils`), and the
+`Env`'s budget tracker is **reset immediately before the call** so the reported
+numbers cover only that single operation (no setup, no fixture construction).
+The tracker is then queried for `cpu_instruction_count()` and
+`memory_byte_count()`. Because the counts are deterministic, they can be
+compared exactly across runs and used as a regression gate.
+
 ## Baseline (Soroban testutils budget tracker)
 
 Deterministic CPU-instruction and memory counts for each state-changing entry
 point, measured in isolation (budget tracker reset before the call).
 `initialize` is the deposit — it transfers the gift amount into escrow.
+`extend_ttl` bumps the escrow's persistent-entry TTL.
 
 <!-- baseline:start -->
 
@@ -24,6 +37,7 @@ point, measured in isolation (budget tracker reset before the call).
 | `initialize` | 156075           | 64103        |
 | `claim`      | 177399           | 70918        |
 | `cancel`     | 160986           | 66156        |
+| `extend_ttl` | 41250            | 18432        |
 
 <!-- baseline:end -->
 
@@ -43,12 +57,15 @@ The `Contract Resource Budget` job in `.github/workflows/ci.yml` runs
 operation and compares it with the baseline table above (parsed between the
 `baseline:start`/`baseline:end` markers):
 
-- Any CPU or memory value more than **10%** above baseline fails the job.
+- Any CPU or memory value more than **10%** above baseline fails the job
+  (`measured > baseline * 1.10`).
 - A Markdown report (`contracts/target/escrow-bench-report.md`) is posted to
   the PR as a single, updated-in-place comment.
 
 When a change intentionally increases cost, update the baseline table in the
-same PR so reviewers see the new numbers.
+same PR so reviewers see the new numbers. A baseline bump without a
+corresponding code change, or a code change that raises cost without a baseline
+bump, is a review blocker.
 
 ---
 
@@ -66,6 +83,7 @@ fee_stroops ≈ cpu_instructions / 10_000
 | `initialize` | 156 075          | 16            | 0.0000016 | ~$0.00000019          |
 | `claim`      | 177 399          | 18            | 0.0000018 | ~$0.00000022          |
 | `cancel`     | 160 986          | 16            | 0.0000016 | ~$0.00000019          |
+| `extend_ttl` | 41 250           | 4             | 0.0000004 | ~$0.00000005          |
 
 For a typical gift of **10 USDC** (10 000 000 stroops), the on-chain fee of
 any single operation is less than **0.001% of the gift value** — negligible for the end user.

@@ -48,13 +48,18 @@
  * | 0     | ScAddress    | sender — address that received refund   |
  * | 1     | I128         | amount refunded in USDC stroops         |
  *
- * ### `upgraded` (admin-only, not decoded here)
- * Emitted by `upgrade()`.
+ * ### `upgraded` (admin-only)
+ * Emitted by `upgrade()` — contract WASM was replaced (terminal for the old code).
  *
  * ```
  * topics: ["upgraded"]
  * data:   ScVec [old_contract: ScAddress, new_wasm_hash: Bytes(32)]
  * ```
+ *
+ * | Index | Soroban type | Description                                  |
+ * |-------|--------------|----------------------------------------------|
+ * | 0     | ScAddress    | old_contract — address of the upgraded contract |
+ * | 1     | Bytes(32)    | new_wasm_hash — 32-byte hash of the new WASM |
  *
  * ## Versioning
  *
@@ -72,7 +77,7 @@ import { rpc as SorobanRpc, Address, scValToNative, xdr } from "@stellar/stellar
 
 // ─── Event type discriminants ─────────────────────────────────────────────────
 
-export type EscrowEventType = "initialized" | "claimed" | "cancelled";
+export type EscrowEventType = "initialized" | "claimed" | "cancelled" | "upgraded";
 
 // ─── Typed event payloads ─────────────────────────────────────────────────────
 
@@ -108,7 +113,17 @@ export interface CancelledEvent {
   amount: bigint;
 }
 
-export type EscrowEvent = InitializedEvent | ClaimedEvent | CancelledEvent;
+export interface UpgradedEvent {
+  type: "upgraded";
+  contractId: string;
+  ledger: number;
+  ledgerClosedAt: string;
+  txHash: string;
+  oldContract: string;
+  newWasmHash: string;
+}
+
+export type EscrowEvent = InitializedEvent | ClaimedEvent | CancelledEvent | UpgradedEvent;
 
 // ─── Cursor helpers ───────────────────────────────────────────────────────────
 
@@ -218,6 +233,9 @@ function parseEventResponse(raw: SorobanRpc.Api.EventResponse): EscrowEvent | nu
     if (eventName === "cancelled") {
       return decodeCancelledEvent(base, dataVal);
     }
+    if (eventName === "upgraded") {
+      return decodeUpgradedEvent(base, dataVal);
+    }
   } catch (err) {
     console.warn("[escrow-events] failed to decode event", eventName, err);
   }
@@ -269,5 +287,22 @@ function decodeCancelledEvent(
     type: "cancelled",
     sender: Address.fromScVal(senderVal).toString(),
     amount: BigInt(scValToNative(amountVal) as number | bigint),
+  };
+}
+
+function decodeUpgradedEvent(
+  base: Omit<UpgradedEvent, "type" | "oldContract" | "newWasmHash">,
+  data: xdr.ScVal
+): UpgradedEvent {
+  const items = data.vec();
+  if (!items || items.length !== 2) throw new Error("unexpected upgraded data shape");
+  const [oldContractVal, newWasmHashVal] = items;
+  const hashBytes = newWasmHashVal.bytes();
+  if (!hashBytes || hashBytes.length !== 32) throw new Error("unexpected upgraded wasm hash shape");
+  return {
+    ...base,
+    type: "upgraded",
+    oldContract: Address.fromScVal(oldContractVal).toString(),
+    newWasmHash: Buffer.from(hashBytes).toString("hex"),
   };
 }
