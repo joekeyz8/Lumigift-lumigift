@@ -10,6 +10,8 @@
 [![Soroban](https://img.shields.io/badge/Smart%20Contracts-Soroban-blueviolet)](https://developers.stellar.org/docs/build/smart-contracts)
 [![Status](https://img.shields.io/badge/status-page-green)](https://status.lumigift.app)
 
+> **Service Status:** Check real-time uptime and incident history at [status.lumigift.app](https://status.lumigift.app)
+
 ---
 
 ## What is Lumigift?
@@ -272,6 +274,17 @@ See `stryker.config.js`. Key settings:
 | High-priority files | `gift.service.ts`, `escrow-client.ts` |
 
 HTML reports are saved to `reports/mutation/` and uploaded as CI artifacts.
+
+---
+
+## Status & Uptime Monitoring
+
+Lumigift's uptime is monitored externally via the `/api/health/ready` endpoint (checked every minute). Incidents are escalated to the on-call engineer within 2 minutes.
+
+- **Public status page:** [https://status.lumigift.app](https://status.lumigift.app)
+- **Health endpoint:** `/api/health/ready`
+
+Subscribe on the status page to receive incident notifications.
 
 ---
 

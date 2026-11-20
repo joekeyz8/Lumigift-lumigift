@@ -8,13 +8,21 @@ name: Staging Environment Parity Check
 #   - On a weekly schedule so drift is caught even without a deploy
 #
 # What it checks:
-#   1. Env-var key parity — every required env var key present in production
-#      must also be defined in the staging GitHub environment (keys only,
-#      never values).
-#   2. Optional vars — vars present in staging but not production are flagged
+#   1. Env-var key parity — every key listed in `.env.example` must be defined
+#      in the staging GitHub environment (keys only, never values).
+#   2. Schema parity — the set of applied migration versions in the staging
+#      database must match the set applied in production (compared by diffing
+#      the `_prisma_migrations` table in both databases).
+#   3. Optional vars — vars present in staging but not production are flagged
 #      as warnings (not failures).
-#   3. Results posted as a step summary and, on pull requests that trigger
+#   4. Results posted as a step summary and, on pull requests that trigger
 #      staging deploys, as a PR comment.
+#
+# Parity failures are NON-BLOCKING: they never fail the staging deploy. They
+# are surfaced via the step summary, a PR comment, and a Slack alert (when
+# SLACK_WEBHOOK_URL is configured). The `parity-ok` output is still published
+# so callers (staging.yml) can observe the result without being blocked.
+=======
 
 on:
   push:
@@ -25,8 +33,8 @@ on:
   workflow_call:
     outputs:
       parity-ok:
-        description: "true if staging has all required production env-var keys"
-        value: ${{ jobs.env-parity.outputs.parity-ok }}
+        description: "true if staging env vars and DB schema match production"
+        value: ${{ jobs.parity-gate.outputs.parity-ok }}
 
 permissions:
   contents: read
@@ -49,11 +57,10 @@ jobs:
 
       - name: Check env-var key parity
         id: check
-        # Strategy: we enumerate the keys that production *requires* (derived
-        # from .env.example — every [REQUIRED] entry) and compare them with the
-        # keys available in the staging environment via GitHub secrets/vars
-        # context.  Because we can only observe whether a secret IS SET (not its
-        # value), we use a presence check pattern.
+        # Strategy: we enumerate every key listed in `.env.example` and compare
+        # them with the keys available in the staging environment via GitHub
+        # secrets/vars context. Because we can only observe whether a secret IS
+        # SET (not its value), we use a presence check pattern.
         env:
           # ── Staging secrets presence flags ────────────────────────────────
           # Each variable below is set to "1" if the secret/var is present in
@@ -82,42 +89,76 @@ jobs:
           MISSING=()
           PRESENT=()
 
-          check_required() {
-            local key="$1"
-            local has="$2"
+          # ── Derive required keys from .env.example ─────────────────────────
+          # Every non-comment, non-blank line of the form KEY=... is treated as
+          # a required key. Lines starting with '#' are ignored.
+          if [ ! -f .env.example ]; then
+            echo "::error::.env.example not found — cannot derive required env-var keys."
+            echo "parity-ok=false" >> "$GITHUB_OUTPUT"
+            echo "report=❌ \`.env.example\` not found; env-var parity could not be checked." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          REQUIRED_KEYS=()
+          while IFS= read -r line; do
+            # strip leading/trailing whitespace
+            line="${line#"${line%%[![:space:]]*}"}"
+            line="${line%"${line##*[![:space:]]}"}"
+            [ -z "$line" ] && continue
+            case "$line" in \#*) continue ;; esac
+            case "$line" in *=*) ;; *) continue ;; esac
+            key="${line%%=*}"
+            key="${key#"${key%%[![:space:]]*}"}"
+            key="${key%"${key##*[![:space:]]}"}"
+            [ -z "$key" ] && continue
+            REQUIRED_KEYS+=("$key")
+          done < .env.example
+
+          # ── Map .env.example keys to staging presence flags ────────────────
+          # Returns "1" if the key is present in staging, "0" otherwise.
+          presence_for() {
+            case "$1" in
+              NEXTAUTH_SECRET)              echo "$HAS_NEXTAUTH_SECRET" ;;
+              DATABASE_URL)                 echo "$HAS_DATABASE_URL" ;;
+              STELLAR_ESCROW_CONTRACT_ID)   echo "$HAS_STELLAR_ESCROW_CONTRACT_ID" ;;
+              STELLAR_SERVER_SECRET_KEY)    echo "$HAS_STELLAR_SERVER_SECRET_KEY" ;;
+              PAYSTACK_SECRET_KEY)          echo "$HAS_PAYSTACK_SECRET_KEY" ;;
+              STRIPE_SECRET_KEY)            echo "$HAS_STRIPE_SECRET_KEY" ;;
+              STRIPE_WEBHOOK_SECRET)        echo "$HAS_STRIPE_WEBHOOK_SECRET" ;;
+              TERMII_API_KEY)               echo "$HAS_TERMII_API_KEY" ;;
+              REDIS_URL)                    echo "$HAS_REDIS_URL" ;;
+              CRON_SECRET)                  echo "$HAS_CRON_SECRET" ;;
+              APP_URL)                      echo "$HAS_APP_URL" ;;
+              CSRF_SECRET)                  echo "$HAS_CSRF_SECRET" ;;
+              CLOUDINARY_CLOUD_NAME)        echo "$HAS_CLOUDINARY_CLOUD_NAME" ;;
+              CLOUDINARY_API_KEY)           echo "$HAS_CLOUDINARY_API_KEY" ;;
+              CLOUDINARY_API_SECRET)        echo "$HAS_CLOUDINARY_API_SECRET" ;;
+              *)                            echo "unknown" ;;
+            esac
+          }
+
+          for key in "${REQUIRED_KEYS[@]}"; do
+            has="$(presence_for "$key")"
+            if [ "$has" = "unknown" ]; then
+              WARNINGS+=("\`$key\` is listed in .env.example but has no staging presence mapping — add it to the workflow.")
+              continue
+            fi
             if [ "$has" = "1" ]; then
               PRESENT+=("$key")
             else
               MISSING+=("$key")
               FAIL=1
             fi
-          }
-
-          # ── Required secrets (must be present in staging) ──────────────────
-          check_required "NEXTAUTH_SECRET (STAGING_NEXTAUTH_SECRET)"       "$HAS_NEXTAUTH_SECRET"
-          check_required "DATABASE_URL (STAGING_DATABASE_URL)"             "$HAS_DATABASE_URL"
-          check_required "STELLAR_ESCROW_CONTRACT_ID"                      "$HAS_STELLAR_ESCROW_CONTRACT_ID"
-          check_required "STELLAR_SERVER_SECRET_KEY"                       "$HAS_STELLAR_SERVER_SECRET_KEY"
-          check_required "PAYSTACK_SECRET_KEY"                             "$HAS_PAYSTACK_SECRET_KEY"
-          check_required "STRIPE_SECRET_KEY"                               "$HAS_STRIPE_SECRET_KEY"
-          check_required "STRIPE_WEBHOOK_SECRET"                           "$HAS_STRIPE_WEBHOOK_SECRET"
-          check_required "TERMII_API_KEY"                                  "$HAS_TERMII_API_KEY"
-          check_required "REDIS_URL (STAGING_REDIS_URL)"                   "$HAS_REDIS_URL"
-          check_required "CRON_SECRET"                                     "$HAS_CRON_SECRET"
-          check_required "APP_URL (STAGING_APP_URL)"                       "$HAS_APP_URL"
-          check_required "CSRF_SECRET"                                     "$HAS_CSRF_SECRET"
-          check_required "CLOUDINARY_CLOUD_NAME"                           "$HAS_CLOUDINARY_CLOUD_NAME"
-          check_required "CLOUDINARY_API_KEY"                              "$HAS_CLOUDINARY_API_KEY"
-          check_required "CLOUDINARY_API_SECRET"                           "$HAS_CLOUDINARY_API_SECRET"
+          done
 
           # ── Build report ───────────────────────────────────────────────────
           REPORT="## Staging ↔ Production Env-var Parity Report\n\n"
           REPORT+="**Run:** \`$GITHUB_SHA\` | **Date:** $(date -u '+%Y-%m-%d %H:%M UTC')\n\n"
 
           if [ "$FAIL" -eq 0 ]; then
-            REPORT+="✅ **All ${#PRESENT[@]} required env-var keys are present in staging.**\n\n"
+            REPORT+="✅ **All ${#PRESENT[@]} required env-var keys from \`.env.example\` are present in staging.**\n\n"
           else
-            REPORT+="❌ **${#MISSING[@]} required env-var key(s) are MISSING from staging:**\n\n"
+            REPORT+="❌ **${#MISSING[@]} required env-var key(s) from \`.env.example\` are MISSING from staging:**\n\n"
             for key in "${MISSING[@]}"; do
               REPORT+="- \`$key\`\n"
             done
@@ -140,7 +181,7 @@ jobs:
             REPORT+="</details>\n\n"
           fi
 
-          REPORT+="---\n_Generated by \`.github/workflows/staging-parity.yml\` — Issue #294_\n"
+          REPORT+="---\n_Generated by \`.github/workflows/staging-parity.yml\` — Issue #294 / #555_\n"
 
           # ── Write outputs ──────────────────────────────────────────────────
           if [ "$FAIL" -eq 0 ]; then
@@ -158,13 +199,118 @@ jobs:
           # ── Step summary ───────────────────────────────────────────────────
           printf "%b" "$REPORT" >> "$GITHUB_STEP_SUMMARY"
 
-          exit $FAIL
+          # Non-blocking: always exit 0 so the staging deploy is never blocked.
+          exit 0
 
-  # ── 2. Post report as PR comment on staging deploy PRs ─────────────────────
+  # ── 2. Schema parity (migration state) ─────────────────────────────────────
+  schema-parity:
+    name: Schema Parity (staging vs production migrations)
+    runs-on: ubuntu-latest
+    environment: staging
+    outputs:
+      parity-ok: ${{ steps.check.outputs.parity-ok }}
+      report: ${{ steps.check.outputs.report }}
+    steps:
+      - name: Compare applied migration versions
+        id: check
+        # Strategy: query the `_prisma_migrations` table in both databases and
+        # diff the set of successfully-applied migration names. Only migration
+        # *names* are compared — no row data or secrets are read.
+        env:
+          STAGING_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          PRODUCTION_DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: |
+          set +e
+
+          FAIL=0
+          REPORT="## Staging ↔ Production Schema Parity Report\n\n"
+          REPORT+="**Run:** \`$GITHUB_SHA\` | **Date:** $(date -u '+%Y-%m-%d %H:%M UTC')\n\n"
+
+          if [ -z "$STAGING_DATABASE_URL" ] || [ -z "$PRODUCTION_DATABASE_URL" ]; then
+            REPORT+="⚠️ **Skipped:** \`STAGING_DATABASE_URL\` and/or \`PRODUCTION_DATABASE_URL\` not configured.\n\n"
+            echo "parity-ok=false" >> "$GITHUB_OUTPUT"
+            REPORT_ESCAPED="${REPORT//'%'/'%25'}"
+            REPORT_ESCAPED="${REPORT_ESCAPED//$'\n'/'%0A'}"
+            REPORT_ESCAPED="${REPORT_ESCAPED//$'\r'/'%0D'}"
+            echo "report=$REPORT_ESCAPED" >> "$GITHUB_OUTPUT"
+            printf "%b" "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if ! command -v psql >/dev/null 2>&1; then
+            REPORT+="⚠️ **Skipped:** \`psql\` is not available on the runner.\n\n"
+            echo "parity-ok=false" >> "$GITHUB_OUTPUT"
+            REPORT_ESCAPED="${REPORT//'%'/'%25'}"
+            REPORT_ESCAPED="${REPORT_ESCAPED//$'\n'/'%0A'}"
+            REPORT_ESCAPED="${REPORT_ESCAPED//$'\r'/'%0D'}"
+            echo "report=$REPORT_ESCAPED" >> "$GITHUB_OUTPUT"
+            printf "%b" "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Fetch applied migration names from each database.
+          STAGING_MIGRATIONS="$(psql "$STAGING_DATABASE_URL" -Atc \
+            "SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY migration_name;" 2>/dev/null)"
+          STAGING_RC=$?
+          PROD_MIGRATIONS="$(psql "$PRODUCTION_DATABASE_URL" -Atc \
+            "SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY migration_name;" 2>/dev/null)"
+          PROD_RC=$?
+
+          if [ "$STAGING_RC" -ne 0 ] || [ "$PROD_RC" -ne 0 ]; then
+            REPORT+="⚠️ **Could not read migration state** from one or both databases (staging rc=$STAGING_RC, production rc=$PROD_RC).\n\n"
+            echo "parity-ok=false" >> "$GITHUB_OUTPUT"
+            REPORT_ESCAPED="${REPORT//'%'/'%25'}"
+            REPORT_ESCAPED="${REPORT_ESCAPED//$'\n'/'%0A'}"
+            REPORT_ESCAPED="${REPORT_ESCAPED//$'\r'/'%0D'}"
+            echo "report=$REPORT_ESCAPED" >> "$GITHUB_OUTPUT"
+            printf "%b" "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Diff the two migration lists.
+          ONLY_STAGING="$(comm -23 <(printf '%s\n' "$STAGING_MIGRATIONS" | sort -u) <(printf '%s\n' "$PROD_MIGRATIONS" | sort -u))"
+          ONLY_PROD="$(comm -13 <(printf '%s\n' "$STAGING_MIGRATIONS" | sort -u) <(printf '%s\n' "$PROD_MIGRATIONS" | sort -u))"
+
+          if [ -z "$ONLY_STAGING" ] && [ -z "$ONLY_PROD" ]; then
+            REPORT+="✅ **Staging and production have identical applied migration sets.**\n\n"
+          else
+            FAIL=1
+            REPORT+="❌ **Migration state differs between staging and production.**\n\n"
+            if [ -n "$ONLY_PROD" ]; then
+              REPORT+="<details open><summary>Applied in production but NOT in staging ($(printf '%s\n' "$ONLY_PROD" | wc -l | tr -d ' '))</summary>\n\n"
+              while IFS= read -r m; do [ -n "$m" ] && REPORT+="- \`$m\`\n"; done <<< "$ONLY_PROD"
+              REPORT+="</details>\n\n"
+            fi
+            if [ -n "$ONLY_STAGING" ]; then
+              REPORT+="<details><summary>Applied in staging but NOT in production ($(printf '%s\n' "$ONLY_STAGING" | wc -l | tr -d ' '))</summary>\n\n"
+              while IFS= read -r m; do [ -n "$m" ] && REPORT+="- \`$m\`\n"; done <<< "$ONLY_STAGING"
+              REPORT+="</details>\n\n"
+            fi
+          fi
+
+          REPORT+="---\n_Generated by \`.github/workflows/staging-parity.yml\` — Issue #555_\n"
+
+          if [ "$FAIL" -eq 0 ]; then
+            echo "parity-ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "parity-ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          REPORT_ESCAPED="${REPORT//'%'/'%25'}"
+          REPORT_ESCAPED="${REPORT_ESCAPED//$'\n'/'%0A'}"
+          REPORT_ESCAPED="${REPORT_ESCAPED//$'\r'/'%0D'}"
+          echo "report=$REPORT_ESCAPED" >> "$GITHUB_OUTPUT"
+
+          printf "%b" "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+
+          # Non-blocking: always exit 0.
+          exit 0
+
+  # ── 3. Post report as PR comment on staging deploy PRs ─────────────────────
   post-pr-comment:
     name: Post Parity Report as PR Comment
     runs-on: ubuntu-latest
-    needs: env-parity
+    needs: [env-parity, schema-parity]
     if: always() && github.event_name == 'pull_request'
     steps:
       - name: Find existing parity comment
@@ -173,29 +319,61 @@ jobs:
         with:
           issue-number: ${{ github.event.pull_request.number }}
           comment-author: "github-actions[bot]"
-          body-includes: "Staging ↔ Production Env-var Parity Report"
+          body-includes: "Staging ↔ Production"
 
       - name: Create or update parity comment
         uses: peter-evans/create-or-update-comment@71345be0265236311c031f5c7866368bd1eff043 # v4.0.0
         with:
           comment-id: ${{ steps.find-comment.outputs.comment-id }}
           issue-number: ${{ github.event.pull_request.number }}
-          body: ${{ needs.env-parity.outputs.report }}
+          body: |
+            ${{ needs.env-parity.outputs.report }}
+
+            ${{ needs.schema-parity.outputs.report }}
           edit-mode: replace
 
-  # ── 3. Fail the workflow if parity check failed ─────────────────────────────
+  # ── 4. Non-blocking parity gate + alert ────────────────────────────────────
+  # This job NEVER fails the workflow. It aggregates the parity results,
+  # publishes the `parity-ok` output for callers, and sends a Slack alert
+  # when parity has drifted.
   parity-gate:
-    name: Parity Gate
+    name: Parity Gate (non-blocking)
     runs-on: ubuntu-latest
-    needs: env-parity
+    needs: [env-parity, schema-parity]
     if: always()
+    outputs:
+      parity-ok: ${{ steps.aggregate.outputs.parity-ok }}
     steps:
-      - name: Enforce parity gate
+      - name: Aggregate parity results
+        id: aggregate
         run: |
-          if [ "${{ needs.env-parity.outputs.parity-ok }}" != "true" ]; then
-            echo "❌ Staging parity check failed — one or more required env-var keys are missing."
-            echo "   Review the step summary above and add the missing secrets/variables"
-            echo "   to the 'staging' GitHub environment before deploying."
-            exit 1
+          ENV_OK="${{ needs.env-parity.outputs.parity-ok }}"
+          SCHEMA_OK="${{ needs.schema-parity.outputs.parity-ok }}"
+          echo "env-parity-ok=$ENV_OK"
+          echo "schema-parity-ok=$SCHEMA_OK"
+          if [ "$ENV_OK" = "true" ] && [ "$SCHEMA_OK" = "true" ]; then
+            echo "parity-ok=true" >> "$GITHUB_OUTPUT"
+            echo "✅ Staging parity check passed (env vars + schema)."
+          else
+            echo "parity-ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Staging parity drift detected (env-var-ok=$ENV_OK, schema-ok=$SCHEMA_OK). This does NOT block the staging deploy."
           fi
-          echo "✅ Staging parity check passed."
+
+      - name: Send Slack alert on parity failure
+        if: steps.aggregate.outputs.parity-ok != 'true'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "::notice::SLACK_WEBHOOK_URL not configured — skipping parity alert."
+            exit 0
+          fi
+          TEXT=":warning: Staging parity drift detected on \`${{ github.repository }}\` (ref \`${{ github.ref_name }}\`, run <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|#${{ github.run_id }}>). Env-var parity: ${{ needs.env-parity.outputs.parity-ok }}, schema parity: ${{ needs.schema-parity.outputs.parity-ok }}. This does not block the staging deploy."
+          PAYLOAD="$(printf '{"text":%s}' "$(printf '%s' "$TEXT" | jq -Rs .)")"
+          HTTP_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H 'Content-type: application/json' --data "$PAYLOAD" "$SLACK_WEBHOOK_URL")"
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "✅ Slack alert sent (HTTP $HTTP_CODE)."
+          else
+            echo "::warning::Failed to send Slack alert (HTTP $HTTP_CODE)."
+          fi
+          exit 0

@@ -28,6 +28,17 @@ on:
       - "scripts/env-validate.sh"
   schedule:
     - cron: "0 8 * * 1"   # weekly — Monday 08:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write   # required for AWS OIDC (Terraform state access)
+
+env:
+  TF_VERSION: "1.7.5"
+  STAGING_HEALTH_URL: ${{ vars.STAGING_HEALTH_URL }}
+  PRODUCTION_HEALTH_URL: ${{ vars.PRODUCTION_HEALTH_URL }}
 
 jobs:
   drift-check:
@@ -148,3 +159,190 @@ jobs:
           echo "| Schema keys documented in .env.example | see step output |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Validation script syntax | see step output |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Unsafe combination detection | see step output |" >> "$GITHUB_STEP_SUMMARY"
+
+  environment-drift:
+    name: Staging vs Production drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Run on PRs, scheduled runs, and manual dispatch — not on every push.
+    if: github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DRIFT_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          role-session-name: env-drift-${{ github.run_id }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Pull Terraform state for staging and production
+        id: tf
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/drift
+
+          pull_state() {
+            local env_name="$1"
+            local backend_cfg="infra/terraform/backends/${env_name}.hcl"
+            local workdir="infra/terraform"
+
+            if [[ ! -f "$backend_cfg" ]]; then
+              echo "::warning::Backend config $backend_cfg not found; skipping $env_name"
+              echo "{}" > "/tmp/drift/${env_name}.json"
+              return
+            fi
+
+            pushd "$workdir" >/dev/null
+            terraform init -input=false -reconfigure -backend-config="$backend_cfg" >/dev/null
+            terraform state pull > "/tmp/drift/${env_name}.json"
+            popd >/dev/null
+          }
+
+          pull_state staging
+          pull_state production
+
+          # Normalise state into a comparable resource map (address -> attributes hash)
+          for env_name in staging production; do
+            jq -S '
+              [ .resources[]? | .module // "" as $m
+                | .type as $t
+                | .name as $n
+                | .instances[]?
+                | {
+                    address: (($m | if . == "" then "" else . + "." end) + $t + "." + $n + (if .index_key == null then "" else "[\(.index_key)]" end)),
+                    attributes: (.attributes | with_entries(select(.key | test("^(id|arn|created_at|updated_at|timeouts|tags_all)$") | not)))
+                  }
+              ]
+              | sort_by(.address)
+              | from_entries? // .
+            ' "/tmp/drift/${env_name}.json" > "/tmp/drift/${env_name}.normalised.json" || \
+              cp "/tmp/drift/${env_name}.json" "/tmp/drift/${env_name}.normalised.json"
+          done
+
+          echo "✅ Terraform state pulled for both environments"
+
+      - name: Diff Terraform state between environments
+        id: tf-diff
+        run: |
+          set -euo pipefail
+          DIFF_FILE=/tmp/drift/terraform-diff.txt
+          if diff -u /tmp/drift/staging.normalised.json /tmp/drift/production.normalised.json > "$DIFF_FILE" 2>&1; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+            echo "✅ No Terraform state drift detected"
+            : > "$DIFF_FILE"
+          else
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+            echo "⚠️ Terraform state drift detected:"
+            head -n 200 "$DIFF_FILE"
+          fi
+
+      - name: Compare deployed application versions
+        id: version-diff
+        run: |
+          set -euo pipefail
+          fetch_version() {
+            local url="$1"
+            if [[ -z "$url" ]]; then
+              echo "unknown"
+              return
+            fi
+            curl -fsS --max-time 15 "$url" \
+              | jq -r '.version // .commit // .gitSha // "unknown"' 2>/dev/null \
+              || echo "unreachable"
+          }
+
+          STAGING_VERSION=$(fetch_version "${STAGING_HEALTH_URL}")
+          PRODUCTION_VERSION=$(fetch_version "${PRODUCTION_HEALTH_URL}")
+
+          echo "staging=$STAGING_VERSION" >> "$GITHUB_OUTPUT"
+          echo "production=$PRODUCTION_VERSION" >> "$GITHUB_OUTPUT"
+
+          if [[ "$STAGING_VERSION" == "$PRODUCTION_VERSION" ]]; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+            echo "✅ Versions match: $STAGING_VERSION"
+          else
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+            echo "⚠️ Version drift: staging=$STAGING_VERSION production=$PRODUCTION_VERSION"
+          fi
+
+      - name: Build drift report
+        id: report
+        run: |
+          set -euo pipefail
+          REPORT=/tmp/drift/report.md
+          TF_DRIFT="${{ steps.tf-diff.outputs.drift }}"
+          VER_DRIFT="${{ steps.version-diff.outputs.drift }}"
+
+          {
+            echo "## 🔍 Environment Drift Report"
+            echo ""
+            echo "_Generated $(date -u +'%Y-%m-%d %H:%M UTC') for \`${{ github.ref_name }}\`_"
+            echo ""
+            echo "### Terraform state"
+            if [[ "$TF_DRIFT" == "true" ]]; then
+              echo "⚠️ **Drift detected** between staging and production."
+              echo ""
+              echo '```diff'
+              head -n 150 /tmp/drift/terraform-diff.txt || true
+              echo '```'
+            else
+              echo "✅ No drift detected."
+            fi
+            echo ""
+            echo "### Application version"
+            echo ""
+            echo "| Environment | Version |"
+            echo "|-------------|---------|"
+            echo "| staging | \`${{ steps.version-diff.outputs.staging }}\` |"
+            echo "| production | \`${{ steps.version-diff.outputs.production }}\` |"
+            echo ""
+            if [[ "$VER_DRIFT" == "true" ]]; then
+              echo "⚠️ **Version drift detected.**"
+            else
+              echo "✅ Versions match."
+            fi
+          } > "$REPORT"
+
+          if [[ "$TF_DRIFT" == "true" || "$VER_DRIFT" == "true" ]]; then
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post drift report as PR comment
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: env-drift
+          path: /tmp/drift/report.md
+
+      - name: Notify Slack on scheduled drift
+        if: github.event_name == 'schedule' && steps.report.outputs.drift == 'true'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DRIFT_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SLACK_WEBHOOK_URL:-}" ]]; then
+            echo "::warning::SLACK_DRIFT_WEBHOOK_URL not configured; skipping Slack notification"
+            exit 0
+          fi
+          REPORT_TEXT=$(cat /tmp/drift/report.md)
+          PAYLOAD=$(jq -n --arg text "$REPORT_TEXT" '{text: $text}')
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            --data "$PAYLOAD" "$SLACK_WEBHOOK_URL"
+          echo "✅ Slack notification sent"
+
+      - name: Fail if drift detected
+        if: steps.report.outputs.drift == 'true'
+        run: |
+          echo "❌ Environment drift detected — see report above."
+          exit 1

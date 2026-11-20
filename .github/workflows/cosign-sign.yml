@@ -4,11 +4,34 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  workflow_call:
+    inputs:
+      image-ref:
+        description: "Image reference to sign (e.g. ghcr.io/owner/repo). Defaults to this repository's GHCR image."
+        required: false
+        type: string
+      sbom-path:
+        description: "Path to the SBOM file to attest (SPDX-JSON or CycloneDX)."
+        required: false
+        type: string
+      sbom-type:
+        description: "Cosign predicate type for the SBOM (spdxjson or cyclonedx)."
+        required: false
+        type: string
+        default: spdxjson
+    outputs:
+      image-digest:
+        description: "Digest of the built and signed image."
+        value: ${{ jobs.build-and-sign.outputs.image-digest }}
+      image-ref:
+        description: "Image reference (tags) of the built and signed image."
+        value: ${{ jobs.build-and-sign.outputs.image-ref }}
 
 permissions:
   contents: read
   packages: write          # push to GHCR
   id-token: write          # needed for keyless Cosign (OIDC) + SLSA provenance
+=======
 
 concurrency:
   group: cosign-${{ github.ref }}
@@ -44,7 +67,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@902fa8ec7d6ecbea8a986b5e8898f7b4b2f65df2 # v5.7.0
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ${{ inputs.image-ref || format('ghcr.io/{0}', github.repository) }}
           tags: |
             type=sha,format=long,prefix=sha-
             type=ref,event=branch
@@ -123,6 +146,34 @@ jobs:
 
           echo "✅ SLSA provenance attestation attached"
 
+      # ── 8b. Attest SBOM (SPDX-JSON / CycloneDX) ──────────────────────────────
+      # When invoked from the release pipeline, an SBOM file is provided and
+      # attached to the image as a signed attestation for supply-chain
+      # compliance.  Skipped for plain push/tag runs without an SBOM input.
+      - name: Attest SBOM
+        if: ${{ inputs.sbom-path != '' }}
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+          SBOM_PATH: ${{ inputs.sbom-path }}
+          SBOM_TYPE: ${{ inputs.sbom-type || 'spdxjson' }}
+        run: |
+          IMAGE_NAME=$(echo "$TAGS" | head -n1 | tr -d '[:space:]')
+          IMAGE_REF="${IMAGE_NAME}@${DIGEST}"
+
+          if [ ! -f "${SBOM_PATH}" ]; then
+            echo "::error::SBOM file not found: ${SBOM_PATH}"
+            exit 1
+          fi
+
+          echo "Attesting SBOM ${SBOM_PATH} (type: ${SBOM_TYPE}) to ${IMAGE_REF}"
+          cosign attest --yes \
+            --predicate "${SBOM_PATH}" \
+            --type "${SBOM_TYPE}" \
+            "${IMAGE_REF}"
+
+          echo "✅ SBOM attestation attached (${SBOM_TYPE})"
+
       # ── 9. Store signed digest in docs/ops/ ──────────────────────────────────
       - name: Record signed image digest
         env:
@@ -143,6 +194,7 @@ jobs:
           digest: ${DIGEST}
           signed: true
           provenance: true
+          sbom_attested: ${{ inputs.sbom-path != '' }}
           EOF
 
           echo "Digest log updated:"
@@ -153,6 +205,14 @@ jobs:
         with:
           name: signed-image-digest-${{ github.sha }}
           path: docs/ops/signed-digests/digests.log
+          retention-days: 90
+
+      - name: Upload attested SBOM
+        if: ${{ inputs.sbom-path != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: attested-sbom-${{ github.sha }}
+          path: ${{ inputs.sbom-path }}
           retention-days: 90
 
   verify-signature:
@@ -190,3 +250,23 @@ jobs:
             "${IMAGE_REF}" | jq '.[0].optional | {subject, issuer, buildTrigger: .["github-workflow-trigger"]}'
 
           echo "✅ Signature verification passed"
+
+      - name: Verify SBOM attestation
+        if: ${{ inputs.sbom-path != '' }}
+        env:
+          DIGEST: ${{ needs.build-and-sign.outputs.image-digest }}
+          TAGS: ${{ needs.build-and-sign.outputs.image-ref }}
+          SBOM_TYPE: ${{ inputs.sbom-type || 'spdxjson' }}
+        run: |
+          IMAGE_NAME=$(echo "$TAGS" | head -n1 | tr -d '[:space:]')
+          IMAGE_REF="${IMAGE_NAME}@${DIGEST}"
+
+          echo "Verifying SBOM attestation (${SBOM_TYPE}) on: ${IMAGE_REF}"
+
+          cosign verify-attestation \
+            --type "${SBOM_TYPE}" \
+            --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/cosign-sign.yml" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE_REF}"
+
+          echo "✅ SBOM attestation verification passed"

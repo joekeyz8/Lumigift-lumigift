@@ -80,6 +80,18 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <TestnetBanner />
           <ServiceWorkerRegister />
           <main id="main-content">{children}</main>
+          <footer className="site-footer">
+            <nav aria-label="Footer">
+              <a
+                href="https://status.lumigift.app"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="site-footer__link"
+              >
+                Service Status
+              </a>
+            </nav>
+          </footer>
         </Providers>
       </body>
     </html>

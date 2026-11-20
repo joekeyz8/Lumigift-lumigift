@@ -115,11 +115,45 @@ The workflow runs:
 1. Every key in the Zod schema (`src/server/config/env.ts`) is documented in `.env.example`.
 2. `scripts/env-validate.sh` is executable and has no syntax errors.
 3. Unsafe variable combinations are flagged on a test run.
+4. **Terraform state parity** — the workflow compares the Terraform state of the
+   `staging` and `production` workspaces and reports any resource, variable, or
+   output differences between the two environments.
+5. **Application version parity** — the workflow compares the application version
+   (git SHA / release tag) currently deployed to staging and production and flags
+   when production is behind or diverges from staging.
+6. **Staging parity schema check** — verifies that the staging environment's
+   configuration schema matches production (see `docs/ops/staging-parity-checks.md`).
 
 **When drift is detected:**
 
 - The CI job fails with a clear list of missing/extra keys.
+- A drift report is posted as a PR comment (for PR-triggered runs) and sent to
+  the `#ops-alerts` Slack channel (for scheduled runs).
 - Update `.env.example` and re-run to resolve.
+
+---
+
+## Uptime Monitoring & Status Page
+
+Production uptime is monitored externally by **Uptime Robot** (Better Uptime is an
+accepted alternative) — see issue #557.
+
+| Setting            | Value                                                      |
+| ------------------ | ---------------------------------------------------------- |
+| Monitored endpoint | `https://lumigift.app/api/health/ready`                    |
+| Check interval     | 1 minute                                                   |
+| Alert threshold    | 2 consecutive failures (incident raised within 2 minutes)  |
+| Notification       | On-call rotation (PagerDuty / Slack `#ops-alerts`)         |
+| Public status page | `https://status.lumigift.app`                              |
+
+- The `/api/health/ready` endpoint returns `200` only when the app is fully ready
+  (database, Redis, and Stellar RPC reachable); any non-`200` response counts as
+  downtime.
+- Incidents are escalated to the on-call engineer within **2 minutes** of the
+  first failed check.
+- The public status page at `https://status.lumigift.app` is linked from the
+  README and the site footer so users can check current service status.
+=======
 
 ---
 
@@ -158,4 +192,6 @@ The general procedure is:
 - `.env.example` — documented variable list with safe placeholder values
 - `.env.local.example` — local Docker development defaults
 - `docs/ops/staging.md` — staging-specific secrets and smoke tests
+- `docs/ops/staging-parity-checks.md` — staging/production parity schema checks
 - `docs/ops/key-rotation.md` — secret rotation procedures
+- `https://status.lumigift.app` — public uptime status page

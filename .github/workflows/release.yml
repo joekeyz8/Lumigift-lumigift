@@ -12,7 +12,86 @@ jobs:
   release-please:
     name: Release Please
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
     steps:
-      - uses: googleapis/release-please-action@a02a9fd9c745eb84acab628da2d5b7a24f86a603 # v5
+      - id: release
+        uses: googleapis/release-please-action@a02a9fd9c745eb84acab628da2d5b7a24f86a603 # v5
         with:
           release-type: node
+
+  sbom:
+    name: Generate and Publish SBOM
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      spdx_path: ${{ steps.sbom.outputs.spdx_path }}
+      cyclonedx_path: ${{ steps.sbom.outputs.cyclonedx_path }}
+      image_ref: ${{ steps.image.outputs.image_ref }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve image reference
+        id: image
+        run: |
+          IMAGE_REF="${{ vars.DOCKER_IMAGE || format('{0}/{1}', github.repository_owner, github.event.repository.name) }}:${{ needs.release-please.outputs.tag_name }}"
+          echo "image_ref=${IMAGE_REF}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Generate SBOMs
+        id: sbom
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.image_ref }}
+        run: |
+          chmod +x scripts/generate-sbom.sh
+          scripts/generate-sbom.sh "${IMAGE_REF}"
+          SPDX_PATH="sbom.spdx.json"
+          CYCLONEDX_PATH="sbom.cyclonedx.json"
+          if [ ! -f "${SPDX_PATH}" ]; then
+            SPDX_PATH="$(ls -1 *.spdx.json 2>/dev/null | head -n1)"
+          fi
+          if [ ! -f "${CYCLONEDX_PATH}" ]; then
+            CYCLONEDX_PATH="$(ls -1 *.cyclonedx.json 2>/dev/null | head -n1)"
+          fi
+          if [ -z "${SPDX_PATH}" ] || [ ! -f "${SPDX_PATH}" ]; then
+            echo "::error::SPDX-JSON SBOM was not generated"
+            exit 1
+          fi
+          if [ -z "${CYCLONEDX_PATH}" ] || [ ! -f "${CYCLONEDX_PATH}" ]; then
+            echo "::error::CycloneDX SBOM was not generated"
+            exit 1
+          fi
+          echo "spdx_path=${SPDX_PATH}" >> "$GITHUB_OUTPUT"
+          echo "cyclonedx_path=${CYCLONEDX_PATH}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload SBOMs as release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          files: |
+            ${{ steps.sbom.outputs.spdx_path }}
+            ${{ steps.sbom.outputs.cyclonedx_path }}
+
+  cosign-sign:
+    name: Sign Image and Attest SBOM
+    needs: [release-please, sbom]
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    permissions:
+      contents: write
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/cosign-sign.yml
+    with:
+      image_ref: ${{ needs.sbom.outputs.image_ref }}
+      tag_name: ${{ needs.release-please.outputs.tag_name }}
+      spdx_path: ${{ needs.sbom.outputs.spdx_path }}
+      cyclonedx_path: ${{ needs.sbom.outputs.cyclonedx_path }}
+    secrets: inherit
