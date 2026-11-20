@@ -89,10 +89,10 @@ const customConfig = {
 
     // ── Core services ─────────────────────────────────────────────────────────
     "./src/server/services/gift.service.ts": {
-      branches: 75,
-      functions: 75,
-      lines: 75,
-      statements: 75,
+      branches: 90,
+      functions: 90,
+      lines: 90,
+      statements: 90,
     },
     "./src/server/services/claim.service.ts": {
       branches: 75,

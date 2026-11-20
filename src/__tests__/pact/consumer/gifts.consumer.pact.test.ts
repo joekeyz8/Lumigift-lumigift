@@ -19,6 +19,110 @@ const provider = new PactV3({
   logLevel: "warn",
 });
 
+// ── Payments API contract (consumer) ────────────────────────────────────────
+// Issue #583: contract tests for /api/v1/payments routes.
+describe("Payments API contract (consumer)", () => {
+  // ── POST /api/v1/payments/initialize ──────────────────────────────────────
+  describe("initialize payment", () => {
+    it("returns a payment authorization URL", async () => {
+      await provider
+        .addInteraction({
+          states: [{ description: "user is authenticated" }],
+          uponReceiving: "a request to initialize a payment",
+          withRequest: {
+            method: "POST",
+            path: "/api/v1/payments/initialize",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: like("Bearer <token>"),
+            },
+            body: {
+              giftId: string("00000000-0000-0000-0000-000000000001"),
+              amountNgn: integer(5000),
+              email: string("ada@example.com"),
+            },
+          },
+          willRespondWith: {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+            body: {
+              success: like(true),
+              data: {
+                reference: string("lumigift_ref_123"),
+                authorizationUrl: string("https://checkout.paystack.com/abc123"),
+                accessCode: string("abc123"),
+              },
+            },
+          },
+        })
+        .executeTest(async (mockServer) => {
+          const res = await fetch(
+            `${mockServer.url}/api/v1/payments/initialize`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: "Bearer test-token",
+              },
+              body: JSON.stringify({
+                giftId: "00000000-0000-0000-0000-000000000001",
+                amountNgn: 5000,
+                email: "ada@example.com",
+              }),
+            }
+          );
+
+          expect(res.status).toBe(200);
+          const json = await res.json();
+          expect(json.success).toBe(true);
+          expect(json.data.reference).toBeDefined();
+          expect(json.data.authorizationUrl).toBeDefined();
+        });
+    });
+  });
+
+  // ── GET /api/v1/payments/callback ─────────────────────────────────────────
+  describe("payment callback", () => {
+    it("verifies the payment and returns its status", async () => {
+      await provider
+        .addInteraction({
+          states: [{ description: "a pending payment reference exists" }],
+          uponReceiving: "a request to verify a payment via callback",
+          withRequest: {
+            method: "GET",
+            path: "/api/v1/payments/callback",
+            query: {
+              reference: string("lumigift_ref_123"),
+            },
+          },
+          willRespondWith: {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+            body: {
+              success: like(true),
+              data: {
+                reference: string("lumigift_ref_123"),
+                status: string("success"),
+                amountNgn: integer(5000),
+                giftId: string("00000000-0000-0000-0000-000000000001"),
+                paidAt: string("2026-01-01T00:00:00.000Z"),
+              },
+            },
+          },
+        })
+        .executeTest(async (mockServer) => {
+          const res = await fetch(
+            `${mockServer.url}/api/v1/payments/callback?reference=lumigift_ref_123`
+          );
+          expect(res.status).toBe(200);
+          const json = await res.json();
+          expect(json.success).toBe(true);
+          expect(json.data.status).toBe("success");
+        });
+    });
+  });
+});
+
 describe("Gifts API contract (consumer)", () => {
   // ── POST /api/v1/gifts ────────────────────────────────────────────────────
   describe("create gift", () => {

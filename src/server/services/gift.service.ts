@@ -13,6 +13,9 @@ import { createAuditLog } from "./audit.service";
 import { sendGiftReceivedEmail } from "@/lib/email";
 import type { GiftCursorPosition } from "./gift-cursor";
 import { incrementFunnelCounter, recordFunnelTransition } from "@/lib/metrics";
+import { redis } from "@/lib/redis";
+import { giftStatusChannel } from "./gift-events";
+import Stripe from "stripe";
 
 let _stripe: Stripe | null = null;
 function getStripe(): Stripe {
@@ -39,6 +42,42 @@ export async function ngnToUsdc(ngn: number): Promise<string> {
   return (ngn / ngnPerUsdc).toFixed(7);
 }
 
+/**
+ * Thrown when a gift with the same sender, recipient, and amount already
+ * exists in a non-terminal state. Prevents accidental duplicate submissions
+ * (e.g. double-clicking the "Send gift" button).
+ */
+export class DuplicateGiftError extends Error {
+  constructor(public readonly existingGiftId: string) {
+    super("A matching gift is already in progress");
+    this.name = "DuplicateGiftError";
+  }
+}
+
+/**
+ * Returns an existing non-terminal gift matching the sender/recipient/amount
+ * tuple, or `null` if none exists. Used for duplicate-gift prevention.
+ */
+function findDuplicateGift(
+  senderId: string,
+  recipientPhoneHash: string,
+  amountNgn: number
+): Gift | null {
+  const nonTerminal: GiftStatus[] = ["pending_payment", "funded", "locked", "unlocked"];
+  for (const gift of gifts.values()) {
+    if (
+      !gift.deletedAt &&
+      gift.senderId === senderId &&
+      gift.recipientPhoneHash === recipientPhoneHash &&
+      gift.amountNgn === amountNgn &&
+      nonTerminal.includes(gift.status)
+    ) {
+      return gift;
+    }
+  }
+  return null;
+}
+
 /** Hash a phone number for storage. Plaintext is never persisted. */
 export function hashPhone(phone: string): string {
   return createHash("sha256").update(phone).digest("hex");
@@ -46,6 +85,61 @@ export function hashPhone(phone: string): string {
 
 // ─── In-memory store (replace with DB in production) ─────────────────────────
 export const gifts = new Map<string, Gift>();
+
+/**
+ * Persists a gift row together with its payment reference in a single DB
+ * transaction so that no partial state is left behind on failure.
+ */
+async function persistGiftWithPaymentRef(params: {
+  id: string;
+  senderId: string;
+  recipientPhoneHash: string;
+  recipientName: string;
+  recipientEmail?: string;
+  amountNgn: number;
+  amountUsdc: string;
+  message?: string;
+  themeId?: string;
+  unlockAt: Date;
+  provider: "paystack" | "stripe";
+  paymentReference: string;
+}): Promise<Gift> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const now = new Date();
+    const { rows } = await client.query<Gift>(
+      `INSERT INTO gifts
+         (id, sender_id, recipient_phone_hash, recipient_name, recipient_email,
+          amount_ngn, amount_usdc, message, theme_id, unlock_at, status,
+          payment_provider, payment_reference, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending_payment',$11,$12,$13,$13)
+       RETURNING *`,
+      [
+        params.id,
+        params.senderId,
+        params.recipientPhoneHash,
+        params.recipientName,
+        params.recipientEmail ?? null,
+        params.amountNgn,
+        params.amountUsdc,
+        params.message ?? null,
+        params.themeId ?? null,
+        params.unlockAt,
+        params.provider,
+        params.paymentReference,
+        now,
+      ]
+    );
+    await client.query("COMMIT");
+    return rows[0];
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
 
 /** Returns only non-deleted (active) gifts from the store. */
 function activeGifts(): Gift[] {
@@ -84,9 +178,16 @@ export async function createGift(
     throw new Error(`Daily sending limit of ${formatNGN(dailyLimitNgn)} exceeded`);
   }
 
+  const recipientPhoneHash = hashPhone(input.recipientPhone);
+
+  // ── Duplicate gift prevention ──────────────────────────────────────────────
+  const duplicate = findDuplicateGift(senderId, recipientPhoneHash, input.amountNgn);
+  if (duplicate) {
+    throw new DuplicateGiftError(duplicate.id);
+  }
+
   const id = randomUUID();
   const amountUsdc = await ngnToUsdc(input.amountNgn);
-  const recipientPhoneHash = hashPhone(input.recipientPhone);
   const paymentReference = `lumigift_${id}`;
 
   // Sanitize message content to prevent stored XSS
@@ -188,13 +289,22 @@ export async function createGift(
     return { gift, paymentUrl: "", clientSecret: intent.client_secret ?? undefined };
   }
 
-  const payment = await initializePayment({
-    email: `${senderId}@lumigift.app`, // placeholder; use real email from user record
-    amountKobo: ngnToKobo(input.amountNgn),
-    reference: paymentReference,
-    callbackUrl: `${serverConfig.app.url}/api/payments/callback?giftId=${id}`,
-    metadata: { giftId: id, senderId },
-  });
+  let payment;
+  try {
+    payment = await initializePayment({
+      email: `${senderId}@lumigift.app`, // placeholder; use real email from user record
+      amountKobo: ngnToKobo(input.amountNgn),
+      reference: paymentReference,
+      callbackUrl: `${serverConfig.app.url}/api/payments/callback?giftId=${id}`,
+      metadata: { giftId: id, senderId },
+    });
+  } catch (err: unknown) {
+    // Paystack init failed after the gift row was persisted. The gift remains
+    // in `pending_payment` and can be retried; surface a clear error to the
+    // caller so the UI can prompt the user to try again.
+    console.error("[gift] initializePayment failed:", err);
+    throw new Error("Failed to initialize payment. Please try again.");
+  }
 
   return { gift, paymentUrl: payment.authorizationUrl };
 }

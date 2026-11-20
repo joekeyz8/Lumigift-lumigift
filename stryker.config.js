@@ -11,19 +11,25 @@ const config = {
   },
   coverageAnalysis: "perTest",
   mutate: [
-    "src/**/*.ts",
-    "src/**/*.tsx",
+    "src/**/gift.service.ts",
+    "src/**/claim.service.ts",
+    "src/**/gift-state-machine.ts",
+    "src/**/exchange-rate.service.ts",
     "!src/**/*.test.ts",
     "!src/**/*.test.tsx",
     "!src/**/*.d.ts",
-    "!src/styles/**",
-    "!src/app/layout.tsx",
-    "!src/app/providers.tsx",
   ],
   thresholds: {
-    high: 80,
-    low: 70,
-    break: 70,
+    high: 90,
+    low: 80,
+    break: 80,
+  },
+  htmlReporter: {
+    fileName: "reports/mutation/mutation.html",
+  },
+  clearTextReporter: {
+    reportType: "all",
+    allowEmpty: false,
   },
   dashboard: {
     project: "github.com/joekeyz8/Lumigift-lumigift",
