@@ -16,7 +16,9 @@ export type AuditEventType =
   | "data_export_requested"
   | "data_deletion_requested"
   | "data_deletion_completed"
-  | "data_deletion_rejected";
+  | "data_deletion_rejected"
+  // Admin audit log export (Issue #524)
+  | "audit_log_export";
 
 export interface AuditLogEntry {
   eventType: AuditEventType;
@@ -185,4 +187,122 @@ export async function queryAuditLogs(
   }));
 
   return { logs, total };
+}
+
+/** Batch size used when streaming audit logs for export. */
+export const AUDIT_LOG_STREAM_BATCH_SIZE = 500;
+
+/**
+ * Builds the shared WHERE clause and params for audit log filters.
+ * Used by both the paginated query and the streaming export query.
+ */
+function buildAuditLogFilters(query: AuditLogQuery): {
+  whereClause: string;
+  params: unknown[];
+} {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  let paramIndex = 1;
+
+  if (query.userId) {
+    conditions.push(`user_id = $${paramIndex++}`);
+    params.push(query.userId);
+  }
+
+  if (query.giftId) {
+    conditions.push(`gift_id = $${paramIndex++}`);
+    params.push(query.giftId);
+  }
+
+  if (query.eventType) {
+    conditions.push(`event_type = $${paramIndex++}`);
+    params.push(query.eventType);
+  }
+
+  if (query.startDate) {
+    conditions.push(`timestamp >= $${paramIndex++}`);
+    params.push(query.startDate);
+  }
+
+  if (query.endDate) {
+    conditions.push(`timestamp <= $${paramIndex++}`);
+    params.push(query.endDate);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  return { whereClause, params };
+}
+
+/**
+ * Streams audit logs matching the given filters in batches.
+ * Pages through the table using LIMIT/OFFSET so arbitrarily large result
+ * sets can be exported without loading everything into memory.
+ *
+ * @param query - Filter criteria for audit logs
+ * @param batchSize - Number of rows fetched per batch
+ * @yields Batches of matching audit log entries
+ */
+export async function* queryAuditLogsStream(
+  query: AuditLogQuery,
+  batchSize: number = AUDIT_LOG_STREAM_BATCH_SIZE
+): AsyncGenerator<AuditLogResult[], void, unknown> {
+  const { whereClause, params } = buildAuditLogFilters(query);
+  const size = Math.max(1, batchSize);
+  let offset = Math.max(0, query.offset ?? 0);
+
+  for (;;) {
+    const result = await pool.query<{
+      id: string;
+      event_type: AuditEventType;
+      user_id: string | null;
+      gift_id: string | null;
+      amount_ngn: number | null;
+      amount_usdc: string | null;
+      timestamp: Date;
+      ip_address: string | null;
+      user_agent: string | null;
+      metadata: Record<string, unknown> | null;
+    }>(
+      `SELECT
+        id,
+        event_type,
+        user_id,
+        gift_id,
+        amount_ngn,
+        amount_usdc,
+        timestamp,
+        ip_address,
+        user_agent,
+        metadata
+      FROM audit_logs
+      ${whereClause}
+      ORDER BY timestamp DESC, id DESC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, size, offset]
+    );
+
+    if (result.rows.length === 0) {
+      return;
+    }
+
+    yield result.rows.map((row) => ({
+      id: row.id,
+      eventType: row.event_type,
+      userId: row.user_id,
+      giftId: row.gift_id,
+      amountNgn: row.amount_ngn,
+      amountUsdc: row.amount_usdc,
+      timestamp: row.timestamp,
+      ipAddress: row.ip_address,
+      userAgent: row.user_agent,
+      metadata: row.metadata,
+    }));
+
+    if (result.rows.length < size) {
+      return;
+    }
+
+    offset += result.rows.length;
+  }
 }

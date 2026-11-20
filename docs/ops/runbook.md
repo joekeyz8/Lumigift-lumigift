@@ -243,7 +243,88 @@ redis-cli get "cron:dead-letter:cron/v1/unlock"
 - P0 (`unlock` missed > 5 min, `index-events` missed > 15 min): On-call engineer immediately.
 - P1 (`reconcile` missed > 12 h, `expire` missed > 48 h): Engineering lead.
 
+## Payment Reconciliation Mismatches
+
+### Symptoms
+
+- Sentry alert `PaymentReconciliationMismatch` fires (tag `service: payment-reconciliation`)
+- `level = "error"` logs with `metric = "payment.reconciliation.mismatch"` in the log aggregator
+- A user reports a payment that succeeded at Paystack/Stripe but the gift is still `pending`/`funded` (or vice versa)
+- Rows accumulate in the `reconciliation_errors` table
+
+### How alerting works
+
+The reconciliation job (`payment-reconciliation.service.ts`, run by the
+`/api/v1/cron/reconcile` cron every 6 hours) compares Paystack/Stripe records against the
+database. On every mismatch it:
+
+1. Writes a row to `reconciliation_errors` (provider, provider reference, gift id, expected vs
+   actual status, raw provider payload, `resolved = false`).
+2. Emits a structured `error`-level log entry with the fields
+   `metric=payment.reconciliation.mismatch`, `provider`, `providerReference`, `giftId`,
+   `expectedStatus`, `actualStatus`, `reconciliationErrorId`.
+3. Sends an event to Sentry (tag `service: payment-reconciliation`,
+   `alert: payment-reconciliation-mismatch`).
+
+### Alert routing (PagerDuty / Sentry)
+
+- **Sentry → PagerDuty**: the Sentry alert rule `PaymentReconciliationMismatch` is routed to the
+  PagerDuty service **Lumigift Payments** via the Sentry PagerDuty integration.
+  - Severity **P1** when ≥ 1 mismatch is detected (payments are money-critical).
+  - Auto-resolve in PagerDuty when the Sentry issue is resolved (i.e. after the underlying
+    mismatches are fixed and no new ones are detected in the next reconcile run).
+- **Log-based alert**: Betterstack rule `level = "error"` AND
+  `metric = "payment.reconciliation.mismatch"` > 0 in 5 min → Slack `#incidents`.
+- If PagerDuty is unavailable, Sentry email alerts to the on-call rotation are the fallback.
+
+### Diagnosis
+
+1. List unresolved mismatches via the admin endpoint:
+   ```bash
+   curl -X GET "https://lumigift.app/api/v1/admin/reconciliation-errors?resolved=false&limit=50" \
+     -H "Authorization: Bearer $ADMIN_API_TOKEN"
+   ```
+2. Inspect the rows directly if needed:
+   ```sql
+   SELECT id, provider, provider_reference, gift_id, expected_status, actual_status,
+          created_at
+   FROM reconciliation_errors
+   WHERE resolved = false
+   ORDER BY created_at ASC;
+   ```
+3. Cross-check the provider dashboard (Paystack/Stripe) for the referenced transaction.
+4. Check the `cron.run` logs for the `reconcile` job and the Sentry issue for stack context.
+
+### Resolution
+
+1. Determine the source of truth: the payment provider record wins for payment status.
+2. Correct the DB record (or re-trigger the reconcile cron if the fix is in code):
+   ```sql
+   UPDATE gifts SET status = '<correct_status>' WHERE id = '<gift_id>';
+   ```
+3. Re-run reconciliation to confirm no new mismatch is emitted:
+   ```bash
+   curl -X GET "https://lumigift.app/api/v1/cron/reconcile" \
+     -H "Authorization: Bearer $CRON_SECRET"
+   ```
+4. After investigation, mark the row(s) resolved:
+   ```sql
+   UPDATE reconciliation_errors
+   SET resolved = true, resolved_at = NOW(), resolved_by = '<your-name>',
+       resolution_notes = '<what was done>'
+   WHERE id = '<reconciliation_error_id>';
+   ```
+   (Or use the admin endpoint's resolve action if available.)
+5. Resolve the Sentry issue once the backlog of unresolved rows is empty.
+
+### Escalation Path
+
+- Any mismatch involving real money movement: on-call engineer immediately (P1).
+- > 10 unresolved mismatches or a systematic pattern: escalate to engineering lead and CTO.
+- Suspected double-charge / double-refund: **STOP** manual corrections and escalate to CTO.
+
 ## Application Performance Degradation
+=======
 
 ### Symptoms
 

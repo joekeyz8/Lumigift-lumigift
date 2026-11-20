@@ -17,10 +17,12 @@
  *    `updateGiftStatusIdempotent` which enforces the state machine.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { verifyPayment } from "@/lib/paystack";
 import { getRedisClient } from "@/lib/redis";
 import { serviceLogger } from "@/lib/logger";
 import { getGiftsByStatus, updateGiftStatusIdempotent } from "./gift.service";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import type { Gift } from "@/types";
 
 const log = serviceLogger("payment-reconciliation");
@@ -60,6 +62,35 @@ export interface ReconcileResult {
   deadLettered: number;
   /** Any per-gift errors that did not abort the full run. */
   errors: Array<{ giftId: string; message: string }>;
+  /** Gifts where provider records disagreed with the DB (alerted + persisted). */
+  mismatches: number;
+}
+
+/** A persisted reconciliation mismatch awaiting manual review. */
+export interface ReconciliationError {
+  id: string;
+  provider: string;
+  reference: string;
+  gift_id: string | null;
+  expected_amount: number | null;
+  actual_amount: number | null;
+  currency: string | null;
+  status: string;
+  details: Record<string, unknown> | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+/** Input for persisting a reconciliation mismatch. */
+interface ReconciliationMismatchInput {
+  provider: "paystack" | "stripe";
+  reference: string;
+  giftId: string | null;
+  expectedAmount: number | null;
+  actualAmount: number | null;
+  currency: string | null;
+  details: Record<string, unknown>;
+  message: string;
 }
 
 // ─── Core reconciliation ──────────────────────────────────────────────────────
@@ -78,6 +109,7 @@ export async function reconcilePendingPayments(): Promise<ReconcileResult> {
     pending: 0,
     deadLettered: 0,
     errors: [],
+    mismatches: 0,
   };
 
   // ── Distributed lock: skip run if another one is in progress ───────────────
@@ -162,6 +194,45 @@ async function reconcileOneGift(
       result.recovered++;
       // Clear retry counter on successful recovery
       await redis.del(retryKey);
+    } else {
+      // Provider says success but the DB did not reach the expected state.
+      await reportMismatch(result, {
+        provider: "paystack",
+        reference,
+        giftId: gift.id,
+        expectedAmount: gift.amount ?? null,
+        actualAmount: payment.amount ?? null,
+        currency: payment.currency ?? gift.currency ?? null,
+        details: {
+          reason: "provider_success_db_not_locked",
+          paystackStatus: payment.status,
+          dbStatus: updated?.status ?? null,
+          paystackReference: payment.reference ?? reference,
+        },
+        message: "Paystack reports success but gift is not in locked state",
+      });
+    }
+
+    // Amount mismatch check (provider success but amounts disagree)
+    if (
+      payment.amount != null &&
+      gift.amount != null &&
+      Number(payment.amount) !== Number(gift.amount)
+    ) {
+      await reportMismatch(result, {
+        provider: "paystack",
+        reference,
+        giftId: gift.id,
+        expectedAmount: gift.amount,
+        actualAmount: payment.amount,
+        currency: payment.currency ?? gift.currency ?? null,
+        details: {
+          reason: "amount_mismatch",
+          paystackStatus: payment.status,
+          paystackReference: payment.reference ?? reference,
+        },
+        message: "Paystack amount does not match gift amount",
+      });
     }
   } else if (payment.status === "failed") {
     // Payment definitively failed — leave in pending_payment for sender to retry
@@ -174,6 +245,78 @@ async function reconcileOneGift(
     result.pending++;
     await incrementRetryCounter(redis, retryKey, retries);
   }
+}
+
+// ─── Mismatch alerting & persistence ─────────────────────────────────────────
+
+/**
+ * Alerts (Sentry + error log) and persists a reconciliation mismatch for
+ * manual review. Never throws — a failure to persist must not abort the run.
+ */
+async function reportMismatch(
+  result: ReconcileResult,
+  input: ReconciliationMismatchInput
+): Promise<void> {
+  result.mismatches++;
+
+  const context = {
+    provider: input.provider,
+    reference: input.reference,
+    giftId: input.giftId,
+    expectedAmount: input.expectedAmount,
+    actualAmount: input.actualAmount,
+    currency: input.currency,
+    details: input.details,
+  };
+
+  log.error(context, `[reconcile] MISMATCH: ${input.message}`);
+
+  try {
+    Sentry.captureMessage(`[reconcile] Payment mismatch: ${input.message}`, {
+      level: "error",
+      tags: { provider: input.provider, reference: input.reference },
+      extra: context,
+    });
+  } catch (err) {
+    log.error({ err }, "[reconcile] Failed to send Sentry alert");
+  }
+
+  try {
+    const { error } = await supabaseAdmin.from("reconciliation_errors").insert({
+      provider: input.provider,
+      reference: input.reference,
+      gift_id: input.giftId,
+      expected_amount: input.expectedAmount,
+      actual_amount: input.actualAmount,
+      currency: input.currency,
+      status: "unresolved",
+      details: input.details,
+    });
+    if (error) {
+      log.error({ err: error, context }, "[reconcile] Failed to persist reconciliation error");
+    }
+  } catch (err) {
+    log.error({ err, context }, "[reconcile] Failed to persist reconciliation error");
+  }
+}
+
+/**
+ * Returns all unresolved reconciliation errors, newest first.
+ * Intended for the admin listing endpoint.
+ */
+export async function listUnresolvedReconciliationErrors(): Promise<ReconciliationError[]> {
+  const { data, error } = await supabaseAdmin
+    .from("reconciliation_errors")
+    .select("*")
+    .eq("status", "unresolved")
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    log.error({ err: error }, "[reconcile] Failed to list unresolved reconciliation errors");
+    throw new Error(`Failed to list reconciliation errors: ${error.message}`);
+  }
+
+  return (data ?? []) as ReconciliationError[];
 }
 
 /** Increment the retry counter and reset its TTL. */

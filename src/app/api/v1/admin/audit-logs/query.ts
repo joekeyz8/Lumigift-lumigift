@@ -17,12 +17,50 @@ function parseIntegerParam(value: string | null, defaultValue: number): number |
   return Number(value);
 }
 
-export function parseAuditLogQuery(
+export type AuditLogExportFormat = "csv" | "json";
+
+export interface AuditLogExportQuery extends AuditLogQuery {
+  format: AuditLogExportFormat;
+}
+
+const EXPORT_FORMATS: readonly AuditLogExportFormat[] = ["csv", "json"];
+
+function parseEventTypeParam(
   searchParams: URLSearchParams
-): { query: AuditLogQuery } | { error: string } {
+): { eventType: AuditEventType | undefined } | { error: string } {
   const eventType = searchParams.get("eventType");
   if (eventType !== null && !AUDIT_EVENT_TYPES.includes(eventType as AuditEventType)) {
     return { error: "Invalid eventType" };
+  }
+  return { eventType: (eventType as AuditEventType | null) ?? undefined };
+}
+
+function parseDateRange(
+  fromStr: string | null,
+  toStr: string | null
+): { from?: Date; to?: Date } | { error: string } {
+  const from = fromStr ? new Date(fromStr) : undefined;
+  const to = toStr ? new Date(toStr) : undefined;
+
+  if (fromStr && Number.isNaN(from?.getTime())) {
+    return { error: "Invalid from format" };
+  }
+  if (toStr && Number.isNaN(to?.getTime())) {
+    return { error: "Invalid to format" };
+  }
+  if (from && to && from > to) {
+    return { error: "from must be before or equal to to" };
+  }
+
+  return { from, to };
+}
+
+export function parseAuditLogQuery(
+  searchParams: URLSearchParams
+): { query: AuditLogQuery } | { error: string } {
+  const eventTypeResult = parseEventTypeParam(searchParams);
+  if ("error" in eventTypeResult) {
+    return { error: eventTypeResult.error };
   }
 
   const limit = parseIntegerParam(searchParams.get("limit"), 50);
@@ -54,11 +92,44 @@ export function parseAuditLogQuery(
     query: {
       userId: searchParams.get("userId") ?? undefined,
       giftId: searchParams.get("giftId") ?? undefined,
-      eventType: (eventType as AuditEventType | null) ?? undefined,
+      eventType: eventTypeResult.eventType,
       startDate,
       endDate,
       limit,
       offset,
+    },
+  };
+}
+
+export function parseAuditLogExportQuery(
+  searchParams: URLSearchParams
+): { query: AuditLogExportQuery } | { error: string } {
+  const formatParam = searchParams.get("format");
+  if (formatParam !== null && !EXPORT_FORMATS.includes(formatParam as AuditLogExportFormat)) {
+    return { error: "format must be one of: csv, json" };
+  }
+  const format = (formatParam as AuditLogExportFormat | null) ?? "json";
+
+  const eventTypeResult = parseEventTypeParam(searchParams);
+  if ("error" in eventTypeResult) {
+    return { error: eventTypeResult.error };
+  }
+
+  const dateRangeResult = parseDateRange(searchParams.get("from"), searchParams.get("to"));
+  if ("error" in dateRangeResult) {
+    return { error: dateRangeResult.error };
+  }
+
+  return {
+    query: {
+      userId: searchParams.get("userId") ?? undefined,
+      giftId: searchParams.get("giftId") ?? undefined,
+      eventType: eventTypeResult.eventType,
+      startDate: dateRangeResult.from,
+      endDate: dateRangeResult.to,
+      limit: MAX_LIMIT,
+      offset: 0,
+      format,
     },
   };
 }
