@@ -242,3 +242,66 @@ aws dynamodb create-table \
 - **OIDC only**: CI/CD never receives static AWS credentials. The GitHub OIDC role policy is scoped to the minimum permissions required for remote state access.
 - **Sensitive outputs**: The `outputs.tf` file marks sensitive values (e.g. backup runner credentials) with `sensitive = true`.
 - **Never commit**: `terraform.tfvars` is gitignored. Secret values must always be injected via environment variables or a secrets manager.
+
+---
+
+## Network Security
+
+### Database access (app tier only)
+
+The RDS security group (`aws_security_group.rds`) does **not** allow inbound access from `0.0.0.0/0`. The only inbound rule permits TCP port `5432` from the application security group (`aws_security_group.app`), so only the App Runner service can reach PostgreSQL.
+
+- RDS is deployed in private subnets with `publicly_accessible = false` — there is no public IP path to the database.
+- ElastiCache follows the same pattern: port `6379` is reachable only from the app security group.
+- Any new consumer of the database must be attached to the app security group (or a dedicated SG explicitly added to the RDS ingress rule) — do not widen the CIDR range.
+
+### Emergency database access
+
+There is no direct network path from a developer workstation to RDS. For break-glass access use one of:
+
+1. **SSM Session Manager (preferred)** — start a session on an instance in the app tier (or a dedicated bastion) via the SSM agent, then connect to RDS using `psql` from that host. No inbound SSH port is required and all sessions are logged in CloudTrail / Session Manager history.
+2. **Bastion host** — if a bastion is provisioned, it lives in a public subnet with a security group that only accepts SSH from approved CIDR ranges, and its egress is limited to the RDS security group on port `5432`. Bastion access should be temporary and removed after use.
+
+Never add `0.0.0.0/0` ingress rules to the RDS security group, even temporarily.
+
+---
+
+## Web Application Firewall (WAF)
+
+An AWS WAF web ACL (`aws_wafv2_web_acl`) is attached in front of the application to mitigate OWASP Top 10 attacks at the edge. The configuration is managed entirely in Terraform.
+
+### Rules
+
+| Rule | Purpose |
+|------|---------|
+| AWS Managed Rules — SQL injection | Blocks SQLi payloads in query strings, body, and headers |
+| AWS Managed Rules — XSS | Blocks cross-site scripting payloads |
+| Rate-based rule | Limits requests per IP (rate limiting / abuse protection) |
+| AWS Managed Rules — Bot Control / known bad inputs | Filters bad bots and known malicious inputs |
+
+### Rollout: count mode first
+
+All rules are deployed in **count mode** initially so that legitimate traffic is not blocked while baselines are established:
+
+1. Apply the WAF with every rule action set to `count`.
+2. Monitor CloudWatch WAF metrics and sampled requests for **two weeks**, reviewing any matches for false positives.
+3. Tune rule exclusions/scope-down statements as needed.
+4. Only after the two-week observation period, switch the rule actions to `block` and re-apply.
+
+### Alerting
+
+A CloudWatch alarm fires when the number of blocked requests exceeds **1000 per minute**. The alarm publishes to the ops SNS topic (`ops_alert_email`) so the on-call engineer can investigate a potential attack or a misconfigured rule.
+
+---
+
+## Applying Changes
+
+All infrastructure changes follow a staging-first procedure:
+
+1. Run `terraform validate` — this is **required** and must pass before any plan or apply.
+2. `terraform workspace select staging` and run `terraform plan -var-file=terraform.tfvars`; review the plan output carefully (especially security group and WAF changes).
+3. Apply to staging: `terraform apply -var-file=terraform.tfvars`.
+4. Verify behaviour in staging (connectivity, WAF metrics, alarms) before promoting.
+5. Switch to the prod workspace and repeat plan → review → apply.
+
+CI enforces `terraform fmt -check` and `terraform validate` on every pull request; do not merge a plan that has not been validated.

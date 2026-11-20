@@ -130,6 +130,20 @@ afterEach(async () => {
 describe("Chaos: Postgres failure", () => {
   const itChaos = CHAOS_MODE ? it : it.skip;
 
+  /** Assert a response body leaks no stack traces, connection strings or secrets. */
+  function expectNoSensitiveData(data: unknown): void {
+    const serialized = JSON.stringify(data ?? "");
+    // Stack traces / internal file paths
+    expect(serialized).not.toMatch(
+      /at Object\.|at Function\.|at async |\.ts:\d+:\d+|\.js:\d+:\d+|node_modules/
+    );
+    // Connection strings / credentials
+    expect(serialized).not.toMatch(/postgres(ql)?:\/\//i);
+    expect(serialized).not.toMatch(/password|passwd|secret|api[_-]?key/i);
+    // Raw driver error internals
+    expect(serialized).not.toMatch(/ECONNREFUSED|ETIMEDOUT|EPIPE/);
+  }
+
   itChaos(
     "API returns 503 (not unhandled 500) when Postgres is killed",
     async () => {
@@ -139,25 +153,12 @@ describe("Chaos: Postgres failure", () => {
       // Attempt a read endpoint (gifts list or health) — any DB-touching route
       const response = await httpRequest("GET", "/api/v1/gifts");
 
-      // Must NOT be an unhandled crash (500 with no body or stack trace exposed)
-      // Acceptable: 503 Service Unavailable, 500 with a structured error body
-      expect(response.status).toBeGreaterThanOrEqual(400);
+      // DB-touching endpoints must degrade gracefully with 503, never 500
+      expect(response.status).toBe(503);
 
       const data = response.data as Record<string, unknown>;
-
-      // If it is a 500, the body must be structured (no stack trace leaked)
-      if (response.status === 500) {
-        expect(data).toHaveProperty("error");
-        // Ensure no raw stack trace or internal details are leaked
-        expect(JSON.stringify(data)).not.toMatch(
-          /at Object\.|at Function\.|\.ts:\d+:\d+|node_modules/
-        );
-      }
-
-      // Preferred: 503 with success: false
-      if (response.status === 503) {
-        expect(data.success).toBe(false);
-      }
+      expect(data.success).toBe(false);
+      expectNoSensitiveData(data);
     },
     15_000
   );
@@ -170,13 +171,14 @@ describe("Chaos: Postgres failure", () => {
 
       const response = await httpRequest("GET", "/api/v1/gifts");
 
-      expect(response.status).toBeGreaterThanOrEqual(400);
+      // Timeout must surface as 503, not 500
+      expect(response.status).toBe(503);
       const data = response.data as Record<string, unknown>;
 
       // Body must be valid JSON with an error field
       expect(typeof data).toBe("object");
-      // No raw stack traces
-      expect(JSON.stringify(data)).not.toMatch(/at Object\.|\.ts:\d+:\d+/);
+      expect(data.success).toBe(false);
+      expectNoSensitiveData(data);
     },
     15_000
   );
@@ -196,24 +198,36 @@ describe("Chaos: Postgres failure", () => {
   );
 
   itChaos(
-    "Postgres requests succeed after database is restored",
+    "Connection pool reconnects and requests succeed after Toxiproxy is restored",
     async () => {
       // Kill the proxy
       await setProxyEnabled(PROXY_NAMES.postgres, false);
 
-      const failedResponse = await httpRequest("GET", "/api/health");
-      // Should fail gracefully
-      expect(failedResponse.status).not.toBe(200);
+      const failedResponse = await httpRequest("GET", "/api/v1/gifts");
+      // Should fail gracefully with 503
+      expect(failedResponse.status).toBe(503);
+      expectNoSensitiveData(failedResponse.data);
 
       // Restore the proxy
       await restoreProxy(PROXY_NAMES.postgres);
       await waitForPgProxy();
 
-      // Requests should succeed now
-      const okResponse = await httpRequest("GET", "/api/health");
+      // The app's connection pool must reconnect — retry briefly to allow
+      // stale/broken pooled connections to be evicted and replaced.
+      const deadline = Date.now() + 10_000;
+      let okResponse = await httpRequest("GET", "/api/v1/gifts");
+      while (okResponse.status !== 200 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 500));
+        okResponse = await httpRequest("GET", "/api/v1/gifts");
+      }
+
       expect(okResponse.status).toBe(200);
+
+      // Health endpoint should also report healthy again
+      const healthResponse = await httpRequest("GET", "/api/health");
+      expect(healthResponse.status).toBe(200);
     },
-    25_000
+    30_000
   );
 
   itChaos(
@@ -225,8 +239,10 @@ describe("Chaos: Postgres failure", () => {
 
       const data = response.data as Record<string, unknown>;
 
-      // Health must not crash with 500 / no body
+      // Health must not crash with 500 / no body — degrade to 503
       expect(response.status).not.toBe(500);
+      expect([200, 503]).toContain(response.status);
+      expectNoSensitiveData(data);
 
       // If structured health response, Postgres should be degraded / down
       if (data.checks && typeof data.checks === "object") {

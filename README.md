@@ -97,6 +97,8 @@ scripts/
 
 ## Getting Started
 
+> **New contributor?** Start with the [Contributor Onboarding Guide](CONTRIBUTING.md) — it covers repo setup, environment variables, Docker dev setup, running tests, the architecture, and your first PR workflow.
+
 ### Prerequisites
 
 - **Docker & Docker Compose** (recommended for quick setup)
@@ -277,7 +279,7 @@ HTML reports are saved to `reports/mutation/` and uploaded as CI artifacts.
 
 ## Contributing
 
-We welcome contributions! Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR.
+We welcome contributions! Please read the [Contributor Onboarding Guide](CONTRIBUTING.md) before opening a PR — it walks you through setup, architecture, testing, and the first-contribution workflow.
 
 - Bug reports → [Bug Report template](.github/ISSUE_TEMPLATE/bug_report.md)
 - Feature requests → [Feature Request template](.github/ISSUE_TEMPLATE/feature_request.md)

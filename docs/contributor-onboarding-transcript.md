@@ -3,12 +3,21 @@
 > **Status:** Placeholder — transcript will be added once the onboarding video is recorded and published.
 > See [CONTRIBUTING.md](../CONTRIBUTING.md#onboarding-video-walkthrough) for the video links.
 > Closes #315.
+>
+> **Note:** This transcript is supplementary accessibility material only. The canonical
+> onboarding resource for new engineers is the structured guide at
+> [`CONTRIBUTING.md`](../CONTRIBUTING.md), which covers repository clone, environment
+> variables, Docker dev setup, running tests, the architecture overview, common pitfalls,
+> and the first-contribution workflow. Start there; use this transcript only as an
+> alternative to watching the video.
 
 ---
 
 ## Overview
 
 This transcript accompanies the Lumigift contributor onboarding video. It is provided for accessibility (deaf/hard-of-hearing contributors) and for contributors who prefer reading over watching.
+
+For the complete, structured onboarding guide — including architecture, component responsibilities, and common pitfalls — see [`CONTRIBUTING.md`](../CONTRIBUTING.md). The steps below mirror the video and are not a substitute for that guide.
 
 The video covers four steps:
 
@@ -111,8 +120,10 @@ Then open a pull request from your fork's branch against `joekeyz8/Lumigift-lumi
 ## Accessibility Notes
 
 - Closed captions are enabled on the YouTube video.
-- This transcript is the canonical text version.
-- If you notice an error in the transcript, please open a PR against this file.
+- This transcript is the canonical text version of the *video*; the canonical onboarding
+  guide is [`CONTRIBUTING.md`](../CONTRIBUTING.md).
+- If you notice an error in the transcript, please open a PR against this file. If setup
+  steps change, update `CONTRIBUTING.md` first and then this transcript.
 
 ---
 

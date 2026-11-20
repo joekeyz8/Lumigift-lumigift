@@ -48,6 +48,9 @@ jobs:
           exit-code: "1"
           format: "table"
 
+      # Plan covers all resources, including the RDS security group (app-SG-only
+      # ingress on 5432) and WAF rules. The plan must be reviewed on the PR and
+      # applied to staging before it is promoted to production.
       - name: Terraform Plan
         id: plan
         run: terraform plan -input=false -no-color

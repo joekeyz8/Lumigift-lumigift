@@ -144,12 +144,23 @@ jobs:
 
       - name: Run Postgres chaos tests
         id: postgres-chaos
+        # Issue #564 — verify graceful DB-failure degradation:
+        #   * Toxiproxy simulates connection refused on the Postgres proxy
+        #   * All endpoints must return 503 (not 500)
+        #   * Error bodies must not leak sensitive data (DSNs, credentials, stack traces)
+        #   * Connection pool must recover once the toxic is removed
         run: |
           CHAOS_MODE=1 CHAOS_APP_URL=http://localhost:3000 \
           TOXIPROXY_API=http://localhost:8474 \
+          CHAOS_PG_PROXY=lumigift_postgres_chaos \
+          CHAOS_PG_UPSTREAM=localhost:5433 \
+          CHAOS_PG_LISTEN=0.0.0.0:5434 \
+          CHAOS_EXPECT_STATUS=503 \
+          CHAOS_ASSERT_NO_LEAK=1 \
+          CHAOS_VERIFY_RECOVERY=1 \
           npx jest chaos-tests/chaos-postgres.test.ts \
             --runInBand --forceExit --no-coverage \
-            --testTimeout=30000 \
+            --testTimeout=60000 \
             --json --outputFile=chaos-postgres-results.json \
             2>&1 | tee chaos-postgres.log
         continue-on-error: true
@@ -224,3 +235,19 @@ jobs:
             exit 1
           fi
           echo "✅ All chaos tests passed."
+
+      - name: Verify Postgres chaos results (503 + no leak + recovery)
+        if: always()
+        run: |
+          if [ ! -f chaos-postgres-results.json ]; then
+            echo "❌ Postgres chaos results file missing — suite did not run."
+            exit 1
+          fi
+          FAILED=$(jq '.numFailedTests // 0' chaos-postgres-results.json)
+          PASSED=$(jq '.numPassedTests // 0' chaos-postgres-results.json)
+          echo "Postgres chaos — passed: $PASSED, failed: $FAILED"
+          if [ "$FAILED" != "0" ] || [ "$PASSED" = "0" ]; then
+            echo "❌ Postgres chaos suite did not pass cleanly."
+            exit 1
+          fi
+          echo "✅ Postgres chaos suite passed (503 degradation, no leak, recovery)."

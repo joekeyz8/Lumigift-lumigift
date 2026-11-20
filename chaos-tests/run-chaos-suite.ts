@@ -29,8 +29,10 @@ import {
   ensureProxy,
   PROXY_NAMES,
   PROXY_CONFIG,
-  waitForToxiproxy as _waitForToxiproxy,
 } from "./toxiproxy-setup";
+
+const TOXIPROXY_API = process.env.TOXIPROXY_API ?? "http://localhost:8474";
+const CHAOS_APP_URL = process.env.CHAOS_APP_URL ?? "http://localhost:3000";
 
 const START_TIME = Date.now();
 
@@ -76,8 +78,16 @@ async function main() {
 
     try {
       output = execSync(
-        `CHAOS_MODE=1 npx jest ${suite.file} --runInBand --forceExit --no-coverage --testTimeout=30000`,
-        { encoding: "utf-8", env: { ...process.env, CHAOS_MODE: "1" } }
+        `npx jest ${suite.file} --runInBand --forceExit --no-coverage --testTimeout=30000`,
+        {
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            CHAOS_MODE: "1",
+            TOXIPROXY_API,
+            CHAOS_APP_URL,
+          },
+        }
       );
       console.log(output);
     } catch (err: unknown) {
@@ -101,6 +111,8 @@ async function main() {
     runAt: new Date().toISOString(),
     totalDurationMs: Date.now() - START_TIME,
     passed: allPassed,
+    toxiproxyApi: TOXIPROXY_API,
+    appUrl: CHAOS_APP_URL,
     suites: results,
   };
 
@@ -111,6 +123,7 @@ async function main() {
   console.log(`Duration: ${((Date.now() - START_TIME) / 1000).toFixed(1)}s`);
   console.log("Results written to chaos-results.json");
 
+  // Exit non-zero on any suite failure so the weekly CI job surfaces regressions.
   process.exit(allPassed ? 0 : 1);
 }
 
