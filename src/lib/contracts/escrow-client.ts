@@ -21,6 +21,8 @@ import {
   nativeToScVal,
   scValToNative,
 } from "@stellar/stellar-sdk";
+import { readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 
 // ─── Error codes (mirrors EscrowError in lib.rs) ──────────────────────────────
 
@@ -69,6 +71,19 @@ export interface EscrowState {
   amount: bigint; // stroops (7 decimal places)
   unlockTime: bigint; // Unix timestamp (seconds)
   claimed: boolean;
+}
+
+/**
+ * Decoded payload of the `Upgraded` event emitted by the contract's
+ * admin-authorized `upgrade` function.
+ */
+export interface UpgradedEvent {
+  /** Stellar public key (G…) of the admin that authorized the upgrade. */
+  admin: string;
+  /** Hex-encoded hash of the new contract WASM. */
+  newWasmHash: string;
+  /** Ledger timestamp (Unix seconds) at which the upgrade was applied. */
+  upgradedAt: bigint;
 }
 
 // ─── Client options ───────────────────────────────────────────────────────────
@@ -237,6 +252,48 @@ export class EscrowClient {
     return decodeGetStatusResult(returnVal);
   }
 
+  // ── upgrade ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Builds an `upgrade` transaction envelope ready to be signed by the admin
+   * and submitted.
+   *
+   * The contract requires the admin's authorization; the returned XDR must be
+   * signed by the admin key (held in the secrets manager for mainnet) before
+   * submission. On success the contract emits an `Upgraded` event which can be
+   * decoded with {@link decodeUpgradedEvent}.
+   *
+   * @param newWasmHash - 32-byte hash of the new contract WASM (hex or Buffer)
+   */
+  async buildUpgrade(newWasmHash: string | Buffer): Promise<string> {
+    const wasmHashBytes =
+      typeof newWasmHash === "string" ? Buffer.from(newWasmHash, "hex") : newWasmHash;
+    if (wasmHashBytes.length !== 32) {
+      throw new Error(
+        `Invalid WASM hash length: expected 32 bytes, got ${wasmHashBytes.length}`
+      );
+    }
+
+    const account = await this.rpc.getAccount(this.opts.sourcePublicKey);
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.opts.networkPassphrase,
+    })
+      .addOperation(
+        this.contract.call("upgrade", nativeToScVal(wasmHashBytes, { type: "bytes" }))
+      )
+      .setTimeout(30)
+      .build();
+
+    const simResult = await this.rpc.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(simResult)) {
+      throw parseContractError(simResult.error);
+    }
+
+    return SorobanRpc.assembleTransaction(tx, simResult).build().toXDR();
+  }
+
   // ── submitTransaction ────────────────────────────────────────────────────────
 
   /**
@@ -304,6 +361,33 @@ function decodeGetStatusResult(val: xdr.ScVal): EscrowStatus {
   }
 }
 
+/**
+ * Decodes an `Upgraded` contract event emitted by the escrow contract.
+ *
+ * The event topics are `["upgraded", admin]` and the data payload is the tuple
+ * `(new_wasm_hash: BytesN<32>, upgraded_at: u64)`.
+ */
+export function decodeUpgradedEvent(event: SorobanRpc.Api.EventResponse): UpgradedEvent {
+  const topics = event.topic ?? [];
+  if (topics.length < 2) {
+    throw new Error("Upgraded event is missing the admin topic");
+  }
+  const admin = Address.fromScVal(topics[1]).toString();
+
+  const data = event.value.vec();
+  if (!data || data.length !== 2) {
+    throw new Error(`Unexpected Upgraded event data shape: ${JSON.stringify(event.value)}`);
+  }
+  const [wasmHashVal, upgradedAtVal] = data;
+  const wasmHashBytes = scValToNative(wasmHashVal) as Buffer | Uint8Array;
+
+  return {
+    admin,
+    newWasmHash: Buffer.from(wasmHashBytes).toString("hex"),
+    upgradedAt: BigInt(scValToNative(upgradedAtVal) as number | bigint),
+  };
+}
+
 function parseContractError(errorMsg: string): EscrowContractError | Error {
   // Soroban error strings contain the u32 error code, e.g. "Error(Contract, #3)"
   const match = errorMsg.match(/#(\d+)/);
@@ -321,22 +405,60 @@ function sleep(ms: number): Promise<void> {
 // ─── Factory ──────────────────────────────────────────────────────────────────
 
 /**
+ * Reads the deployed contract ID for a network from the committed
+ * `.contract-ids.json` manifest at the repository root.
+ *
+ * The manifest is written by `scripts/deploy-contract.ts` and has the shape:
+ *
+ *   { "testnet": "C…", "mainnet": "C…" }
+ */
+export function readContractIdFromManifest(
+  network: "mainnet" | "testnet",
+  manifestPath: string = resolvePath(process.cwd(), ".contract-ids.json")
+): string | undefined {
+  let raw: string;
+  try {
+    raw = readFileSync(manifestPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    throw new Error(`Malformed contract ID manifest at ${manifestPath}`);
+  }
+
+  const id = parsed[network];
+  return typeof id === "string" && id.length > 0 ? id : undefined;
+}
+
+/**
  * Creates an {@link EscrowClient} from environment variables.
  * Requires: STELLAR_RPC_URL, STELLAR_NETWORK_PASSPHRASE,
  *           STELLAR_ESCROW_CONTRACT_ID, STELLAR_SERVER_PUBLIC_KEY
+ *
+ * When `STELLAR_ESCROW_CONTRACT_ID` is unset and `STELLAR_NETWORK=mainnet`,
+ * the contract ID is read from the committed `.contract-ids.json` manifest.
  */
 export function createEscrowClient(): EscrowClient {
+  const network = process.env.STELLAR_NETWORK === "mainnet" ? "mainnet" : "testnet";
+
   const rpcUrl =
     process.env.STELLAR_RPC_URL ??
-    (process.env.STELLAR_NETWORK === "mainnet"
+    (network === "mainnet"
       ? "https://soroban-rpc.stellar.org"
       : "https://soroban-testnet.stellar.org");
 
   const networkPassphrase =
     process.env.STELLAR_NETWORK_PASSPHRASE ??
-    (process.env.STELLAR_NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET);
+    (network === "mainnet" ? Networks.PUBLIC : Networks.TESTNET);
 
-  const contractId = process.env.STELLAR_ESCROW_CONTRACT_ID;
+  let contractId = process.env.STELLAR_ESCROW_CONTRACT_ID;
+  if (!contractId && network === "mainnet") {
+    contractId = readContractIdFromManifest("mainnet");
+  }
   if (!contractId) throw new Error("Missing STELLAR_ESCROW_CONTRACT_ID");
 
   const sourcePublicKey = process.env.STELLAR_SERVER_PUBLIC_KEY;

@@ -25,7 +25,27 @@ export interface DeploymentManifest {
   const confirmMainnet = args.includes("--confirm-mainnet");
 
   // ─── Config ───────────────────────────────────────────────────────────────────
-  const network = process.env.STELLAR_NETWORK ?? "testnet";
+  // `--network <testnet|mainnet>` overrides STELLAR_NETWORK.
+  const networkFlagIndex = args.findIndex(
+    (a) => a === "--network" || a.startsWith("--network=")
+  );
+  let networkFromFlag: string | undefined;
+  if (networkFlagIndex !== -1) {
+    const raw = args[networkFlagIndex];
+    networkFromFlag = raw.includes("=")
+      ? raw.slice(raw.indexOf("=") + 1)
+      : args[networkFlagIndex + 1];
+    if (!networkFromFlag) {
+      console.error("❌ --network requires a value (testnet or mainnet).");
+      process.exit(1);
+    }
+  }
+
+  const network = (networkFromFlag ?? process.env.STELLAR_NETWORK ?? "testnet").toLowerCase();
+  if (network !== "testnet" && network !== "mainnet") {
+    console.error(`❌ Unsupported network "${network}". Use "testnet" or "mainnet".`);
+    process.exit(1);
+  }
   const isMainnet = network === "mainnet";
 
   const rpcUrl =
@@ -128,16 +148,28 @@ This will deploy a LIVE contract with REAL funds at stake.
   const wasmBuffer = fs.readFileSync(wasmPath);
   const wasmHash = crypto.createHash("sha256").update(wasmBuffer).digest("hex");
 
-  const secretKey = process.env.STELLAR_SERVER_SECRET_KEY;
-  if (!secretKey) {
-    console.error("❌ Missing required environment variable: STELLAR_SERVER_SECRET_KEY");
-    process.exit(1);
+  // ─── Resolve signing key ──────────────────────────────────────────────────────
+  // Mainnet admin keys must live in a secrets manager (AWS Secrets Manager or
+  // HashiCorp Vault), never in env files. The secret location is provided via
+  // env (ARN / path) and the value is fetched at deploy time.
+  let secretKey: string | undefined;
+
+  if (isMainnet) {
+    secretKey = fetchMainnetAdminKey();
+  } else {
+    secretKey = process.env.STELLAR_SERVER_SECRET_KEY;
+    if (!secretKey) {
+      console.error("❌ Missing required environment variable: STELLAR_SERVER_SECRET_KEY");
+      process.exit(1);
+    }
   }
 
   // Stellar secret keys are 56-character base32 strings starting with 'S'
   if (!/^S[A-Z2-7]{55}$/.test(secretKey)) {
     console.error(
-      "❌ STELLAR_SERVER_SECRET_KEY does not match expected Stellar secret key format."
+      isMainnet
+        ? "❌ Mainnet admin key from secrets manager does not match expected Stellar secret key format."
+        : "❌ STELLAR_SERVER_SECRET_KEY does not match expected Stellar secret key format."
     );
     process.exit(1);
   }
@@ -147,7 +179,12 @@ This will deploy a LIVE contract with REAL funds at stake.
     const keypair = Keypair.fromSecret(secretKey);
     deployerPublicKey = keypair.publicKey();
   } catch (err) {
-    console.error("❌ Failed to derive public key from STELLAR_SERVER_SECRET_KEY:", err);
+    console.error(
+      isMainnet
+        ? "❌ Failed to derive public key from mainnet admin key:"
+        : "❌ Failed to derive public key from STELLAR_SERVER_SECRET_KEY:",
+      err
+    );
     process.exit(1);
   }
 
@@ -287,7 +324,7 @@ This will deploy a LIVE contract with REAL funds at stake.
   if (isJsonOutput) {
     console.log(JSON.stringify(manifest));
   } else {
-    console.log(`\n📄 Contract ID written to .contract-ids.json`);
+    console.log(`\n📄 Contract ID written to .contract-ids.json (${network})`);
     console.log(`📦 Manifest written to ${path.relative(ROOT, manifestPath)}`);
     console.log(`📋 Deployment logged to deployments.log`);
     console.log(`\n🔗 Stellar Explorer: ${explorerUrl}`);
@@ -305,3 +342,63 @@ Add to .env:
 `);
   }
 })();
+
+/**
+ * Fetch the mainnet admin signing key from the configured secrets manager.
+ * Supports AWS Secrets Manager (via AWS_SECRET_ARN) and HashiCorp Vault
+ * (via VAULT_SECRET_PATH). Fails fast if no backend is configured or the
+ * lookup fails.
+ */
+function fetchMainnetAdminKey(): string {
+  const awsSecretArn = process.env.MAINNET_ADMIN_SECRET_ARN;
+  const vaultSecretPath = process.env.MAINNET_ADMIN_VAULT_PATH;
+
+  if (awsSecretArn) {
+    const result = spawnSync(
+      "aws",
+      ["secretsmanager", "get-secret-value", "--secret-id", awsSecretArn, "--query", "SecretString", "--output", "text"],
+      { encoding: "utf-8", shell: false }
+    );
+    if (result.error || result.status !== 0) {
+      console.error(
+        "❌ Failed to fetch mainnet admin key from AWS Secrets Manager:",
+        result.stderr || result.error?.message
+      );
+      process.exit(1);
+    }
+    const value = result.stdout.trim();
+    if (!value) {
+      console.error("❌ AWS Secrets Manager returned an empty mainnet admin key.");
+      process.exit(1);
+    }
+    return value;
+  }
+
+  if (vaultSecretPath) {
+    const result = spawnSync(
+      "vault",
+      ["kv", "get", "-field=secret_key", vaultSecretPath],
+      { encoding: "utf-8", shell: false }
+    );
+    if (result.error || result.status !== 0) {
+      console.error(
+        "❌ Failed to fetch mainnet admin key from Vault:",
+        result.stderr || result.error?.message
+      );
+      process.exit(1);
+    }
+    const value = result.stdout.trim();
+    if (!value) {
+      console.error("❌ Vault returned an empty mainnet admin key.");
+      process.exit(1);
+    }
+    return value;
+  }
+
+  console.error(
+    "❌ Mainnet deployment requires the admin key to be stored in a secrets manager.\n" +
+      "   Set MAINNET_ADMIN_SECRET_ARN (AWS Secrets Manager) or\n" +
+      "   MAINNET_ADMIN_VAULT_PATH (HashiCorp Vault). Env-file keys are not allowed on mainnet."
+  );
+  process.exit(1);
+}

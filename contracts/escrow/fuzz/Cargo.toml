@@ -1,0 +1,29 @@
+[package]
+name = "lumigift-escrow-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.soroban-sdk]
+version = "21.0.0"
+features = ["testutils"]
+
+[dependencies.lumigift-escrow]
+path = ".."
+features = ["fuzz"]
+
+[[bin]]
+name = "escrow_state_transitions"
+path = "fuzz_targets/escrow_state_transitions.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

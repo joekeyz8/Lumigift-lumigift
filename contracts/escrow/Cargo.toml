@@ -6,6 +6,10 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+fuzz = []
+
 [dependencies]
 soroban-sdk = { version = "29.0.1", features = ["alloc"] }
 

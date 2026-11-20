@@ -57,6 +57,14 @@ async function runSmokeTests() {
     network = args[networkArgIdx + 1];
   }
 
+  const SUPPORTED_NETWORKS = ["testnet", "mainnet"];
+  if (!SUPPORTED_NETWORKS.includes(network)) {
+    console.error(
+      `❌ Unsupported network "${network}". Expected one of: ${SUPPORTED_NETWORKS.join(", ")}`
+    );
+    process.exit(1);
+  }
+
   const rpcUrl =
     process.env.STELLAR_RPC_URL ??
     (network === "mainnet"
@@ -92,13 +100,16 @@ async function runSmokeTests() {
   }
 
   if (!contractId) {
-    // Try reading from .contract-ids.json
+    // Try reading from .contract-ids.json (source of truth for mainnet deployment)
     const contractIdsPath = path.resolve(ROOT, ".contract-ids.json");
     if (fs.existsSync(contractIdsPath)) {
       try {
         const ids = JSON.parse(fs.readFileSync(contractIdsPath, "utf-8"));
-        if (ids[network]?.escrow) {
-          contractId = ids[network].escrow;
+        const entry = ids[network];
+        if (entry?.escrow) {
+          contractId = entry.escrow;
+        } else if (typeof entry === "string") {
+          contractId = entry;
         }
       } catch {
         /* ignore */
@@ -186,11 +197,41 @@ async function runSmokeTests() {
     );
   }
 
+  // ─── Resolve Admin Key (secrets manager, not env file) ──────────────────────
+  // The mainnet admin key is stored in the secrets manager. It is injected into
+  // the process environment at runtime by the CI/deploy pipeline (e.g. via
+  // `aws secretsmanager get-secret-value` or the platform's secret injection).
+  // We never read it from a committed env file.
+  const resolveAdminKey = (): string | undefined => {
+    const fromEnv = process.env.STELLAR_ADMIN_SECRET_KEY;
+    if (fromEnv) return fromEnv;
+    // Fallback: allow a secrets-manager-provided file path (mounted secret).
+    const secretFile = process.env.STELLAR_ADMIN_SECRET_FILE;
+    if (secretFile && fs.existsSync(secretFile)) {
+      try {
+        return fs.readFileSync(secretFile, "utf-8").trim();
+      } catch {
+        /* ignore */
+      }
+    }
+    return undefined;
+  };
+
+  const adminKey = resolveAdminKey();
+  if (network === "mainnet" && !adminKey) {
+    console.warn(
+      "⚠️  No mainnet admin key found (STELLAR_ADMIN_SECRET_KEY / STELLAR_ADMIN_SECRET_FILE). " +
+        "Read invocations will use a placeholder source."
+    );
+  }
+
   // ─── Check 3: On-Chain get_state Invocation ─────────────────────────────────
   const check3Start = Date.now();
   if (contractId && /^C[A-Z2-7]{55}$/.test(contractId)) {
-    // Dummy / test source key or server secret key for read invocations
+    // Secrets-manager-sourced admin key for read invocations; fall back to
+    // legacy env var or a placeholder for read-only invocation.
     const sourceKey =
+      adminKey ??
       process.env.STELLAR_SERVER_SECRET_KEY ??
       // Well-known public test account secret if no secret is provided for read-only invocation
       "SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
@@ -253,6 +294,7 @@ async function runSmokeTests() {
   const check4Start = Date.now();
   if (contractId && /^C[A-Z2-7]{55}$/.test(contractId)) {
     const sourceKey =
+      adminKey ??
       process.env.STELLAR_SERVER_SECRET_KEY ??
       "SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
 

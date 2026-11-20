@@ -4,6 +4,15 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  schedule:
+    # Weekly fuzz run (issue #532) — Sundays at 02:00 UTC
+    - cron: "0 2 * * 0"
+  workflow_dispatch:
+    inputs:
+      run_fuzz:
+        description: "Run the 24h escrow fuzz job"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -76,10 +85,100 @@ jobs:
           echo "✅ All mainnet safety gates passed. Proceeding with deployment."
           echo "network-ok=true" >> "$GITHUB_OUTPUT"
 
+  # ── Issue #530: Escrow contract deployment to Stellar mainnet (Gate C-3) ────
+  deploy-contract-mainnet:
+    name: Deploy Escrow Contract (mainnet)
+    runs-on: ubuntu-latest
+    needs: [verify-mainnet-environment]
+    if: needs.verify-mainnet-environment.outputs.network-ok == 'true'
+    environment: production
+    outputs:
+      contract-id: ${{ steps.deploy-contract.outputs.contract-id }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # Needed to commit the updated .contract-ids.json back to main
+          persist-credentials: true
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # ── Fetch the mainnet admin key from the secrets manager ────────────────
+      # The admin key is NOT stored in an env file or repo secrets directly;
+      # it lives in the secrets manager and is fetched at deploy time using
+      # short-lived OIDC credentials (id-token: write at workflow level).
+      - name: Fetch mainnet admin key from secrets manager
+        id: fetch-admin-key
+        env:
+          SECRETS_MANAGER_URL: ${{ vars.SECRETS_MANAGER_URL }}
+          SECRETS_MANAGER_TOKEN: ${{ secrets.SECRETS_MANAGER_TOKEN }}
+          ADMIN_KEY_PATH: ${{ vars.MAINNET_ADMIN_KEY_PATH }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SECRETS_MANAGER_URL}" ] || [ -z "${SECRETS_MANAGER_TOKEN}" ]; then
+            echo "❌ Secrets manager URL/token not configured."
+            exit 1
+          fi
+          ADMIN_KEY="$(curl -fsS \
+            -H "Authorization: Bearer ${SECRETS_MANAGER_TOKEN}" \
+            "${SECRETS_MANAGER_URL}/v1/secrets/${ADMIN_KEY_PATH}" \
+            | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const j=JSON.parse(d);process.stdout.write(j.value||"")})')"
+          if [[ ! "${ADMIN_KEY}" =~ ^S[A-Z2-7]{55}$ ]]; then
+            echo "❌ Admin key from secrets manager is not a valid Stellar secret key."
+            exit 1
+          fi
+          echo "✅ Admin key retrieved from secrets manager"
+          # Mask and export for subsequent steps only (never written to disk)
+          echo "::add-mask::${ADMIN_KEY}"
+          echo "admin-key=${ADMIN_KEY}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy escrow contract to mainnet
+        id: deploy-contract
+        env:
+          STELLAR_NETWORK: mainnet
+          STELLAR_HORIZON_URL: https://horizon.stellar.org
+          STELLAR_NETWORK_PASSPHRASE: "Public Global Stellar Network ; September 2015"
+          STELLAR_ADMIN_SECRET_KEY: ${{ steps.fetch-admin-key.outputs.admin-key }}
+        run: |
+          set -euo pipefail
+          npx ts-node scripts/deploy-contract.ts --network mainnet
+          CONTRACT_ID="$(node -e 'const j=require("./.contract-ids.json");process.stdout.write(j.mainnet||"")')"
+          if [ -z "${CONTRACT_ID}" ]; then
+            echo "❌ .contract-ids.json has no mainnet contract ID after deploy."
+            exit 1
+          fi
+          echo "✅ Deployed mainnet contract: ${CONTRACT_ID}"
+          echo "contract-id=${CONTRACT_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Commit updated .contract-ids.json
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- .contract-ids.json; then
+            echo "No changes to .contract-ids.json — nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .contract-ids.json
+          git commit -m "chore(contracts): record mainnet escrow contract ID [skip ci]"
+          git push
+
+      - name: Run contract smoke test against mainnet
+        env:
+          STELLAR_NETWORK: mainnet
+          STELLAR_HORIZON_URL: https://horizon.stellar.org
+          STELLAR_NETWORK_PASSPHRASE: "Public Global Stellar Network ; September 2015"
+          STELLAR_ESCROW_CONTRACT_ID: ${{ steps.deploy-contract.outputs.contract-id }}
+        run: npm run contract:smoke
+
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
-    needs: [verify-mainnet-environment]
+    needs: [verify-mainnet-environment, deploy-contract-mainnet]
     if: needs.verify-mainnet-environment.outputs.network-ok == 'true'
     environment: production
     outputs:
@@ -274,3 +373,74 @@ jobs:
             # Exit non-zero so the job is marked failed and engineers are notified
             exit 1
           fi
+
+  # ── Issue #532: Escrow contract fuzz testing (weekly, 24h) ──────────────────
+  fuzz-escrow:
+    name: Fuzz Escrow Contract (24h)
+    runs-on: ubuntu-latest
+    # Runs on the weekly schedule or when manually requested
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_fuzz)
+    timeout-minutes: 1500
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Run fuzz target for 24h
+        working-directory: contracts/escrow
+        run: |
+          set -euo pipefail
+          # 24h = 86400s; cargo-fuzz accepts a duration via -max_total_time
+          cargo +nightly fuzz run escrow_state_transitions -- -max_total_time=86400
+
+      - name: Upload fuzz artifacts (crashes, corpus)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: escrow-fuzz-artifacts-${{ github.run_id }}
+          path: |
+            contracts/escrow/fuzz/artifacts/
+            contracts/escrow/fuzz/corpus/
+          retention-days: 30
+
+  # ── Issue #533: E2E upgrade test on testnet ─────────────────────────────────
+  upgrade-e2e-testnet:
+    name: E2E Upgrade Test (testnet)
+    runs-on: ubuntu-latest
+    needs: [deploy-contract-mainnet]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install Rust toolchain + wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Deploy escrow contract to testnet
+        env:
+          STELLAR_NETWORK: testnet
+          STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
+          STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+          STELLAR_ADMIN_SECRET_KEY: ${{ secrets.STELLAR_TESTNET_ADMIN_SECRET_KEY }}
+        run: npx ts-node scripts/deploy-contract.ts --network testnet
+
+      - name: Upgrade contract and assert Upgraded event
+        env:
+          STELLAR_NETWORK: testnet
+          STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
+          STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+          STELLAR_ADMIN_SECRET_KEY: ${{ secrets.STELLAR_TESTNET_ADMIN_SECRET_KEY }}
+        run: npm run contract:upgrade:e2e

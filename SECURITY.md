@@ -34,6 +34,14 @@ Out of scope:
 - Denial of service via resource exhaustion
 - Issues requiring physical access to a device
 
+## Smart Contract Assurance
+
+The Soroban escrow contract (`contracts/escrow`) handles real-money USDC transactions and is subject to additional assurance activities:
+
+- **Third-party audit**: The contract has been reviewed by an independent Soroban security firm (focus: reentrancy, auth bypass, TTL edge cases, integer overflow). All Critical/High findings have been resolved. The full report, including the remediation commit reference, is published in [`contracts/escrow/AUDIT_REPORT.md`](contracts/escrow/AUDIT_REPORT.md).
+- **Fuzz testing**: Escrow state transitions are continuously fuzzed (amounts, timestamps, addresses) on a weekly CI schedule with a minimum 24h run. Results and fixed panics are documented in [`contracts/escrow/FUZZ_REPORT.md`](contracts/escrow/FUZZ_REPORT.md).
+- **Upgrade governance**: Mainnet upgrades require admin authorization and are gated by multi-sig/time-lock controls. The operational process is documented in [`contracts/escrow/UPGRADE_RUNBOOK.md`](contracts/escrow/UPGRADE_RUNBOOK.md).
+
 ## Automated Vulnerability Scanning & Gates
 
 All commits and pull requests targeting protected branches (`main`, `develop`) undergo continuous security scans:
