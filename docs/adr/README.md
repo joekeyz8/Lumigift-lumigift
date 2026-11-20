@@ -13,7 +13,7 @@ An ADR is a short document that captures a single architectural decision. It ans
 
 ## Creating a new ADR
 
-1. Copy `template.md` to a new file: `NNNN-short-title.md` (zero-padded 4-digit number).
+1. Copy `0000-template.md` to a new file: `NNNN-short-title.md` (zero-padded 4-digit number).
 2. Fill in all sections.
 3. Set the status to `Proposed` and open a PR for review.
 4. Once merged, update the status to `Accepted`.
@@ -30,3 +30,7 @@ An ADR is a short document that captures a single architectural decision. It ans
 | [ADR-0005](0005-escrow-admin-upgrade-authority.md) | Escrow Admin Storage and Upgrade Authority | Accepted | 2026-09-28 |
 | [ADR-0006](0006-sms-termii.md)                     | SMS Provider — Termii                      | Proposed | 2026-10-20 |
 | [ADR-0007](0007-caching-strategy.md)               | Caching Strategy                           | Proposed | 2026-10-21 |
+| [ADR-0008](0008-webauthn-passkey-auth.md)          | WebAuthn Passkey Authentication            | Proposed | 2026-10-25 |
+| [ADR-0009](0009-referral-programme.md)             | Referral Programme Design                  | Proposed | 2026-10-25 |
+| [ADR-0010](0010-business-accounts-model.md)        | Business Accounts Model                    | Proposed | 2026-10-25 |
+| [ADR-0011](0011-redis-cache-strategy.md)           | Redis Cache Strategy                       | Proposed | 2026-10-25 |

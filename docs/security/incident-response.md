@@ -6,13 +6,18 @@
 > **Review cadence:** Annually, or after any significant infrastructure or team change.  
 > **Last reviewed:** 2026-10-20 — *update this date after each annual review.*
 
+> **See also:** [`docs/ops/incident-response.md`](../ops/incident-response.md) — the general incident response playbook covering the broader severity levels (P0–P3), incident roles (incident commander, comms lead, tech lead), communication templates, and post-mortem process for all incident types. **This document** is the security-specific playbook: it covers security incidents (contract exploits, credential compromise, data breaches) in depth, while the ops playbook provides the shared framework used across security incidents, payment failures, and service outages. Where the two overlap, the ops playbook is authoritative for severity definitions, roles, and communications.
+
 ---
 
 ## Purpose
 
 This playbook defines the internal process for responding to confirmed or suspected security incidents affecting Lumigift. It is intended for use by the engineering team, on-call engineers, and security contacts.
 
+For the general incident response framework (severity levels, roles, communication templates, post-mortems) that applies to all incidents — including payment failures and service outages — see [`docs/ops/incident-response.md`](../ops/incident-response.md).
+
 For instructions on **reporting** a vulnerability from outside the team, see [SECURITY.md](../../SECURITY.md).
+=======
 
 ---
 
@@ -220,6 +225,7 @@ This playbook must be reviewed annually (or after any significant infrastructure
 ## Related Documents
 
 - [SECURITY.md](../../SECURITY.md) — external vulnerability reporting policy
+- [`docs/ops/incident-response.md`](../ops/incident-response.md) — general incident response playbook (severity levels, roles, communication templates, post-mortems)
 - [`docs/ops/runbook.md`](../ops/runbook.md) — production incident runbook (database, Redis, API failures)
 - [`docs/ops/key-rotation.md`](../ops/key-rotation.md) — credential rotation procedures
 - [`docs/ops/contract-migration.md`](../ops/contract-migration.md) — smart contract upgrade procedure
