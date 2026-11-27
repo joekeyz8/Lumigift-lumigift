@@ -24,6 +24,18 @@ const preview: Preview = {
       ],
     },
     layout: "centered",
+    a11y: {
+      // Run axe accessibility checks automatically for every story.
+      config: {
+        rules: [
+          // Enforce WCAG 2.x A/AA rules; keep color-contrast on so regressions surface.
+          { id: "color-contrast", enabled: true },
+        ],
+      },
+      options: {
+        runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"],
+      },
+    },
   },
   decorators: [
     (Story) => (

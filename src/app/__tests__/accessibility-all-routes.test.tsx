@@ -152,6 +152,78 @@ describe("Accessibility gate — /claim page", () => {
   });
 });
 
+// ─── Route: / (landing page) ──────────────────────────────────────────────────
+
+describe("Accessibility gate — / landing page", () => {
+  it("has no critical/serious violations", async () => {
+    const { default: LandingPage } = await import("@/app/page");
+    const { container } = render(<LandingPage />);
+    await expectNoBlockingViolations(container, "/");
+  });
+});
+
+// ─── Route: /send ─────────────────────────────────────────────────────────────
+
+describe("Accessibility gate — /send page", () => {
+  it("has no critical/serious violations", async () => {
+    const { default: SendPage } = await import("@/app/send/page");
+    const { container } = render(<SendPage />);
+    await expectNoBlockingViolations(container, "/send");
+  });
+});
+
+// ─── Route: /dashboard ────────────────────────────────────────────────────────
+
+describe("Accessibility gate — /dashboard page", () => {
+  it("has no critical/serious violations", async () => {
+    const { default: DashboardPage } = await import("@/app/dashboard/page");
+    const { container } = render(<DashboardPage />);
+    await expectNoBlockingViolations(container, "/dashboard");
+  });
+});
+
+// ─── Route: /gifts/[id] (gift detail) ─────────────────────────────────────────
+
+describe("Accessibility gate — /gifts/[id] gift detail page", () => {
+  it("has no critical/serious violations", async () => {
+    const { default: GiftDetailPage } = await import("@/app/gifts/[id]/page");
+    const { container } = render(
+      <GiftDetailPage params={{ id: "test-gift-1" }} />
+    );
+    await expectNoBlockingViolations(container, "/gifts/[id]");
+  });
+});
+
+// ─── Route: /auth/login ───────────────────────────────────────────────────────
+
+describe("Accessibility gate — /auth/login page", () => {
+  it("has no critical/serious violations", async () => {
+    const { default: LoginPage } = await import("@/app/auth/login/page");
+    const { container } = render(<LoginPage />);
+    await expectNoBlockingViolations(container, "/auth/login");
+  });
+});
+
+// ─── Route: /auth/register ────────────────────────────────────────────────────
+
+describe("Accessibility gate — /auth/register page", () => {
+  it("has no critical/serious violations", async () => {
+    const { default: RegisterPage } = await import("@/app/auth/register/page");
+    const { container } = render(<RegisterPage />);
+    await expectNoBlockingViolations(container, "/auth/register");
+  });
+});
+
+// ─── Route: /profile ──────────────────────────────────────────────────────────
+
+describe("Accessibility gate — /profile page", () => {
+  it("has no critical/serious violations", async () => {
+    const { default: ProfilePage } = await import("@/app/profile/page");
+    const { container } = render(<ProfilePage />);
+    await expectNoBlockingViolations(container, "/profile");
+  });
+});
+
 // ─── Exception registry audit ─────────────────────────────────────────────────
 
 describe("Accessibility exception registry (all-routes)", () => {
